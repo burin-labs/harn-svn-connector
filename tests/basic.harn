@@ -1,0 +1,59 @@
+import {
+  activate,
+  call,
+  init,
+  kinds,
+  normalize_inbound,
+  payload_schema,
+  poll_tick,
+  provider_id,
+  shutdown,
+} from "../src/lib"
+
+@complexity(allow)
+pipeline default() {
+  shutdown()
+  assert_eq(provider_id(), "svn", "provider id")
+  assert_eq(kinds()[0], "webhook", "first kind")
+  assert_eq(payload_schema().harn_schema_name, "SvnEventPayload", "schema")
+  init({signing_secret: "secret"})
+  let activated = activate([{id: "primary", path: "/hooks/svn", secrets: {signing_secret: "secret"}}])
+  assert_eq(activated.bindings, 1, "activation count")
+  let body = "{\"event\":\"commit\",\"repository\":{\"url\":\"https://svn.example.com/repos/widgets\"},\"revision\":123,\"author\":\"ada\",\"changed_paths\":[\"/trunk/README.md\"]}"
+  let headers = {["x-svn-event"]: "commit", ["x-svn-revision"]: "delivery-1"}
+  let signature = "sha256=" + hmac_sha256("secret", body)
+  let raw = {
+    signing_secret: "secret",
+    body_text: body,
+    headers: headers + {["x-harn-svn-signature"]: signature},
+  }
+  let normalized = normalize_inbound(raw)
+  assert_eq(normalized.type, "event", "envelope type")
+  assert_eq(normalized.event.kind, "commit", "event kind")
+  assert_eq(normalized.event.signature_status.state, "verified", "signed status")
+  assert(normalized.event.dedupe_key != nil && normalized.event.dedupe_key != "", "dedupe key")
+  let bad_signature = normalize_inbound(
+    {
+    signing_secret: "secret",
+    body_text: body,
+    headers: headers + {["x-harn-svn-signature"]: "sha256=00"},
+  },
+  )
+  assert_eq(bad_signature.type, "reject", "bad signature rejects")
+  assert_eq(bad_signature.reject.status, 401, "bad signature status")
+  let invalid_json = normalize_inbound({body_text: "{bad json", headers: headers})
+  assert_eq(invalid_json.type, "reject", "invalid json rejects")
+  http_mock_clear()
+  http_mock("GET", "http://svn.example.com/projects", {status: 200, body: json_stringify({ok: true})})
+  let response = call(
+    "api.request",
+    {api_base_url: "http://svn.example.com", path: "/projects", access_token: "token"},
+  )
+  assert_eq(response.ok, true, "api request")
+  let unsupported = call("unknown", {})
+  assert(is_err(unsupported), "unknown method errors")
+  let tick = poll_tick({cursor: "123", repository_url: "https://svn.example.com/repos/widgets"})
+  assert_eq(tick.type, "batch", "poll tick batch")
+  http_mock_clear()
+  shutdown()
+}

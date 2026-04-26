@@ -1,0 +1,41 @@
+[package]
+name = "harn-svn-connector"
+version = "0.0.0"
+description = "Pure-Harn Subversion connector: post-commit hook normalization and polling revision scanner surface."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/burin-labs/harn-svn-connector"
+connector_contract = "v1"
+
+[exports]
+default = "src/lib.harn"
+
+[[providers]]
+id = "svn"
+connector = { harn = "src/lib.harn" }
+
+[dependencies]
+
+[connector_contract]
+version = 1
+
+[[connector_contract.fixtures]]
+provider = "svn"
+name = "happy path"
+kind = "webhook"
+headers = { "x-svn-event" = "commit", "x-svn-revision" = "123" }
+body_json = { event = "commit", repository = { url = "https://svn.example.com/repos/widgets" }, revision = 123, author = "ada", changed_paths = ["/trunk/README.md"] }
+expect_type = "event"
+expect_kind = "commit"
+expect_signature_state = "unsigned"
+expect_event_count = 1
+expect_payload_contains = { provider = "svn", raw = { event = "commit" } }
+
+[[connector_contract.fixtures]]
+provider = "svn"
+name = "malformed payload"
+kind = "webhook"
+headers = { "x-svn-event" = "commit" }
+body = "{not json"
+expect_type = "reject"
+expect_response_status = 400
+expect_event_count = 0

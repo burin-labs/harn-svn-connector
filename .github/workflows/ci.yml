@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check package shape
+        run: |
+          test -f harn.toml
+          test -f src/lib.harn
+          test -f SKILL.md
+          test -f README.md
