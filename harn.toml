@@ -1,6 +1,6 @@
 [package]
 name = "harn-svn-connector"
-version = "0.0.0"
+version = "0.1.0"
 description = "Pure-Harn Subversion connector: post-commit hook normalization and polling revision scanner surface."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/burin-labs/harn-svn-connector"
