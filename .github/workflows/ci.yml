@@ -86,3 +86,17 @@ jobs:
           harn add "$GITHUB_WORKSPACE@HEAD"
           printf 'import "harn-svn-connector/default"\n' > smoke.harn
           harn check smoke.harn
+
+  package:
+    name: package
+    if: always()
+    needs: harn
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Harn job result
+        run: |
+          if [ "${{ needs.harn.result }}" != "success" ]; then
+            echo "Harn job finished with ${{ needs.harn.result }}"
+            exit 1
+          fi
+          echo "Harn job passed"
