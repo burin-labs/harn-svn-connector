@@ -40,18 +40,18 @@ pub fn payload_schema() {
   return {
     harn_schema_name: "SvnEventPayload",
     json_schema: {
-    type: "object",
-    required: ["event", "repository", "actor", "raw"],
-    additionalProperties: true,
-    properties: {
-    event: {type: "string"},
-    action: {type: ["string", "null"]},
-    repository: {type: ["object", "null"], additionalProperties: true},
-    actor: {type: ["object", "null"], additionalProperties: true},
-    resource: {type: ["object", "null"], additionalProperties: true},
-    raw: {type: "object"},
-  },
-  },
+      type: "object",
+      required: ["event", "repository", "actor", "raw"],
+      additionalProperties: true,
+      properties: {
+        event: {type: "string"},
+        action: {type: ["string", "null"]},
+        repository: {type: ["object", "null"], additionalProperties: true},
+        actor: {type: ["object", "null"], additionalProperties: true},
+        resource: {type: ["object", "null"], additionalProperties: true},
+        raw: {type: "object"},
+      },
+    },
   }
 }
 
@@ -152,41 +152,41 @@ pub fn call(method, args = {}) {
   if method == "pull_requests.comment" {
     return __api_request(
       args
-      + {
-      method: "POST",
-      path: args?.path ?? __pull_request_comment_path(args),
-      body: {body: args?.body ?? args?.comment},
-    },
+        + {
+        method: "POST",
+        path: args?.path ?? __pull_request_comment_path(args),
+        body: {body: args?.body ?? args?.comment},
+      },
     )
   }
   if method == "pull_requests.update" {
     return __api_request(
       args
-      + {
-      method: "PATCH",
-      path: args?.path ?? __pull_request_path(args),
-      body: __body_without(args, __config_keys() + ["owner", "repo", "pull_request", "pull_request_id", "path"]),
-    },
+        + {
+        method: "PATCH",
+        path: args?.path ?? __pull_request_path(args),
+        body: __body_without(args, __config_keys() + ["owner", "repo", "pull_request", "pull_request_id", "path"]),
+      },
     )
   }
   if method == "issues.comment" {
     return __api_request(
       args
-      + {
-      method: "POST",
-      path: args?.path ?? __issue_comment_path(args),
-      body: {body: args?.body ?? args?.comment},
-    },
+        + {
+        method: "POST",
+        path: args?.path ?? __issue_comment_path(args),
+        body: {body: args?.body ?? args?.comment},
+      },
     )
   }
   if method == "commit_status.set" {
     return __api_request(
       args
-      + {
-      method: "POST",
-      path: args?.path ?? __commit_status_path(args),
-      body: __body_without(args, __config_keys() + ["owner", "repo", "sha", "path"]),
-    },
+        + {
+        method: "POST",
+        path: args?.path ?? __commit_status_path(args),
+        body: __body_without(args, __config_keys() + ["owner", "repo", "sha", "path"]),
+      },
     )
   }
   return __api_request(args + {method: "GET", path: args?.path ?? __repository_file_path(args)})
@@ -209,10 +209,10 @@ fn __reject(status, code, message) {
   return {
     type: "reject",
     reject: {
-    status: status,
-    body: json_stringify({error: code, message: message}),
-    content_type: "application/json",
-  },
+      status: status,
+      body: json_stringify({error: code, message: message}),
+      content_type: "application/json",
+    },
   }
 }
 
@@ -344,13 +344,13 @@ fn __build_event(base_event, payload, raw, headers, signature_status, body_text)
     dedupe_key: __dedupe_key(base_event, payload, raw, headers, body_text),
     signature_status: __signature_status(signature_status),
     payload: {
-    event: base_event,
-    action: payload?.action,
-    repository: __repository(payload),
-    actor: __actor(payload),
-    resource: __resource(payload),
-    raw: payload,
-  },
+      event: base_event,
+      action: payload?.action,
+      repository: __repository(payload),
+      actor: __actor(payload),
+      resource: __resource(payload),
+      raw: payload,
+    },
     headers: __normalized_headers(headers),
   }
 }

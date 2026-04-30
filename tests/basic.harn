@@ -34,10 +34,10 @@ pipeline default() {
   assert(normalized.event.dedupe_key != nil && normalized.event.dedupe_key != "", "dedupe key")
   let bad_signature = normalize_inbound(
     {
-    signing_secret: "secret",
-    body_text: body,
-    headers: headers + {["x-harn-svn-signature"]: "sha256=00"},
-  },
+      signing_secret: "secret",
+      body_text: body,
+      headers: headers + {["x-harn-svn-signature"]: "sha256=00"},
+    },
   )
   assert_eq(bad_signature.type, "reject", "bad signature rejects")
   assert_eq(bad_signature.reject.status, 401, "bad signature status")
