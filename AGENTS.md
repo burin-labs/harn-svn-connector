@@ -1,11 +1,8 @@
 # AGENTS.md
 
-This repository implements `harn-svn-connector`, a pure-Harn connector package for Subversion.
+Use `CLAUDE.md` in this repository for provider-specific notes. Shared connector authoring rules
+live in the canonical Harn guide:
 
-Run targeted checks with a local Harn CLI from the main Harn repository:
+- https://github.com/burin-labs/harn/blob/main/docs/src/connectors/authoring.md
 
-```sh
-harn check src/lib.harn
-harn fmt --check src/lib.harn tests/*.harn
-for test in tests/*.harn; do harn run "$test" || exit 1; done
-```
+Keep this file as a pointer. Add shared connector guidance to the Harn guide first.
