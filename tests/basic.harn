@@ -20,13 +20,9 @@ pipeline default() {
   let activated = activate([{id: "primary", path: "/hooks/svn", secrets: {signing_secret: "secret"}}])
   assert_eq(activated.bindings, 1, "activation count")
   let body = "{\"event\":\"commit\",\"repository\":{\"url\":\"https://svn.example.com/repos/widgets\"},\"revision\":123,\"author\":\"ada\",\"changed_paths\":[\"/trunk/README.md\"]}"
-  let headers = {["x-svn-event"]: "commit", ["x-svn-revision"]: "delivery-1"}
+  let headers = {"x-svn-event": "commit", "x-svn-revision": "delivery-1"}
   let signature = "sha256=" + hmac_sha256("secret", body)
-  let raw = {
-    signing_secret: "secret",
-    body_text: body,
-    headers: headers + {["x-harn-svn-signature"]: signature},
-  }
+  let raw = {signing_secret: "secret", body_text: body, headers: headers + {"x-harn-svn-signature": signature}}
   let normalized = normalize_inbound(raw)
   assert_eq(normalized.type, "event", "envelope type")
   assert_eq(normalized.event.kind, "commit", "event kind")
@@ -36,7 +32,7 @@ pipeline default() {
     {
       signing_secret: "secret",
       body_text: body,
-      headers: headers + {["x-harn-svn-signature"]: "sha256=00"},
+      headers: headers + {"x-harn-svn-signature": "sha256=00"},
     },
   )
   assert_eq(bad_signature.type, "reject", "bad signature rejects")
