@@ -1,0 +1,148 @@
+import { activate, call, init, normalize_inbound, shutdown } from "../src/lib"
+
+@complexity(allow)
+fn signed_raw(body, secret, headers) {
+  return {
+    signing_secret: secret,
+    body_text: body,
+    headers: headers + {"x-harn-svn-signature": "sha256=" + hmac_sha256(secret, body)},
+  }
+}
+
+@complexity(allow)
+pipeline default() {
+  shutdown()
+  init({})
+  activate([])
+  let body = "{\"event\":\"commit\",\"repository\":{\"url\":\"https://svn.example.com/repos/widgets\"},\"revision\":42,\"author\":\"ada\",\"changed_paths\":[\"/trunk/file.txt\"]}"
+  let headers = {"x-svn-event": "commit", "x-svn-revision": "delivery-7"}
+  // HMAC verification: "sha256=" prefix and raw hex are both accepted, missing/mismatched are rejected.
+  let prefixed = normalize_inbound(signed_raw(body, "secret", headers))
+  assert_eq(prefixed.event.signature_status.state, "verified", "sha256= prefix accepted")
+  let raw_hex = hmac_sha256("secret", body)
+  let raw_signed = {signing_secret: "secret", body_text: body, headers: headers + {"x-harn-svn-signature": raw_hex}}
+  assert_eq(
+    normalize_inbound(raw_signed).event.signature_status.state,
+    "verified",
+    "raw hex accepted",
+  )
+  let missing = normalize_inbound({signing_secret: "secret", body_text: body, headers: headers})
+  assert_eq(missing.type, "reject", "missing signature rejects")
+  assert_eq(missing.reject.status, 401, "missing signature status")
+  let mismatched = normalize_inbound(
+    {
+      signing_secret: "secret",
+      body_text: body,
+      headers: headers + {"x-harn-svn-signature": "sha256=" + hmac_sha256("other", body)},
+    },
+  )
+  assert_eq(mismatched.type, "reject", "mismatched signature rejects")
+  // Rate-limit token bucket exhausts after capacity and returns retry_after_ms.
+  http_mock_clear()
+  http_mock(
+    "GET",
+    "http://svn.example.com/projects",
+    {
+      status: 200,
+      body: json_stringify({ok: true}),
+      headers: {"x-ratelimit-limit": "100", "x-ratelimit-remaining": "99", "x-ratelimit-reset": "60"},
+    },
+  )
+  let bucket_args = {
+    api_base_url: "http://svn.example.com",
+    path: "/projects",
+    access_token: "token",
+    rate_limit: {capacity: 2, refill_tokens: 1, refill_interval_ms: 60000, scope_key: "test-bucket"},
+  }
+  let first_call = call("api.request", bucket_args)
+  assert_eq(first_call.status, 200, "first call ok")
+  assert_eq(first_call.rate_limit.limit, 100, "rate-limit header parsed")
+  assert_eq(first_call.rate_limit.remaining, 99, "rate-limit remaining")
+  assert_eq(first_call.rate_limit.reset, 60, "rate-limit reset")
+  let second_call = call("api.request", bucket_args)
+  assert_eq(second_call.status, 200, "second call ok")
+  let third_call = call("api.request", bucket_args)
+  assert(is_err(third_call), "third call exhausts bucket")
+  let denied = unwrap_err(third_call)
+  assert_eq(denied.code, "rate_limited", "rate-limit error code")
+  assert(denied.retry_after_ms > 0, "retry_after_ms surfaced")
+  // Retry-After header is normalized to milliseconds.
+  http_mock_clear()
+  http_mock(
+    "GET",
+    "http://svn.example.com/wait",
+    {status: 200, body: json_stringify({}), headers: {"retry-after": "5"}},
+  )
+  let waited = call("api.request", {api_base_url: "http://svn.example.com", path: "/wait", access_token: "token"})
+  assert_eq(waited.rate_limit.retry_after_ms, 5000, "retry-after seconds -> ms")
+  // Cursor pagination follows next_cursor across pages and merges items.
+  http_mock_clear()
+  http_mock(
+    "GET",
+    "http://svn.example.com/log",
+    {
+      status: 200,
+      body: json_stringify({results: [{revision: 1}, {revision: 2}], next_cursor: "page-2"}),
+    },
+  )
+  http_mock(
+    "GET",
+    "http://svn.example.com/log?cursor=page-2",
+    {status: 200, body: json_stringify({results: [{revision: 3}], next_cursor: nil})},
+  )
+  let paged = call("paginate", {api_base_url: "http://svn.example.com", path: "/log", access_token: "token"})
+  assert_eq(len(paged.items), 3, "paginated item count")
+  assert_eq(paged.items[2].revision, 3, "second page merged")
+  assert_eq(paged.complete, true, "pagination complete")
+  assert_eq(paged.next_cursor, nil, "no further cursor")
+  // Pagination respects items_path / cursor_path overrides for non-default API shapes.
+  http_mock_clear()
+  http_mock(
+    "GET",
+    "http://svn.example.com/revisions",
+    {
+      status: 200,
+      body: json_stringify({data: {nodes: [{id: "a"}], page: {next: "tok-2", hasMore: true}}}),
+    },
+  )
+  http_mock(
+    "GET",
+    "http://svn.example.com/revisions?after=tok-2",
+    {status: 200, body: json_stringify({data: {nodes: [{id: "b"}], page: {next: nil, hasMore: false}}})},
+  )
+  let custom = call(
+    "paginate",
+    {
+      api_base_url: "http://svn.example.com",
+      path: "/revisions",
+      access_token: "token",
+      cursor_param: "after",
+      cursor_path: "/data/page/next",
+      items_path: "/data/nodes",
+    },
+  )
+  assert_eq(len(custom.items), 2, "custom pagination merges nodes")
+  assert_eq(custom.items[0].id, "a", "first page id")
+  assert_eq(custom.items[1].id, "b", "second page id")
+  assert_eq(custom.complete, true, "custom pagination complete")
+  // Pagination caps at max_pages and returns the residual cursor.
+  http_mock_clear()
+  http_mock(
+    "GET",
+    "http://svn.example.com/loop",
+    {status: 200, body: json_stringify({results: [{n: 0}], next_cursor: "tok-1"})},
+  )
+  http_mock(
+    "GET",
+    "http://svn.example.com/loop?cursor=tok-1",
+    {status: 200, body: json_stringify({results: [{n: 1}], next_cursor: "tok-2"})},
+  )
+  let capped = call(
+    "paginate",
+    {api_base_url: "http://svn.example.com", path: "/loop", access_token: "token", max_pages: 2},
+  )
+  assert_eq(capped.complete, false, "max_pages stops paging")
+  assert_eq(capped.next_cursor, "tok-2", "residual cursor returned")
+  http_mock_clear()
+  shutdown()
+}

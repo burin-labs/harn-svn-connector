@@ -45,7 +45,8 @@ pipeline default() {
     "api.request",
     {api_base_url: "http://svn.example.com", path: "/projects", access_token: "token"},
   )
-  assert_eq(response.ok, true, "api request")
+  assert_eq(response.status, 200, "api request status")
+  assert_eq(response.body.ok, true, "api request body")
   let unsupported = call("unknown", {})
   assert(is_err(unsupported), "unknown method errors")
   let tick = poll_tick({cursor: "123", repository_url: "https://svn.example.com/repos/widgets"})
