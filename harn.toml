@@ -13,6 +13,31 @@ default = "src/lib.harn"
 id = "svn"
 connector = { harn = "src/lib.harn" }
 
+[providers.setup]
+auth_type = "api-key"
+flow = "api-key"
+required_secrets = ["svn/username", "svn/password"]
+setup_command = ["harn", "connect", "svn"]
+validation_command = ["harn", "connect", "status", "--connector", "svn", "--json"]
+
+[[providers.setup.health_checks]]
+id = "username"
+kind = "secret"
+secret = "svn/username"
+
+[[providers.setup.health_checks]]
+id = "password"
+kind = "secret"
+secret = "svn/password"
+
+[providers.setup.recovery]
+missing_auth = "Store svn/username and svn/password before enabling Subversion bindings."
+expired_credentials = "Rotate svn/password, then rerun Subversion connection validation."
+revoked_credentials = "Replace svn/password with active Subversion credentials or an application password."
+missing_scopes = "Grant read access to the repository and write access where outbound operations require it."
+inaccessible_resource = "Confirm the credentials can access the target Subversion repository URL and paths."
+transient_provider_outage = "Retry after the Subversion server is reachable."
+
 [dependencies]
 
 [connector_contract]
