@@ -12,6 +12,7 @@ default = "src/lib.harn"
 [[providers]]
 id = "svn"
 connector = { harn = "src/lib.harn" }
+capabilities = ["webhook", "rate_limit", "pagination"]
 
 [providers.setup]
 auth_type = "api-key"
