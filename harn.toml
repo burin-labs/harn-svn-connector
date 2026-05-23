@@ -44,18 +44,23 @@ transient_provider_outage = "Retry after the Subversion server is reachable."
 [connector_contract]
 version = 1
 
+# Security sweep 2026-05-23 (F3): with no signing secret configured for this binding the
+# connector now fail-closes with 401 missing_signature instead of accepting an unsigned
+# delivery. The contract harness does not seed per-binding secrets, so the unsigned-happy-path
+# fixture inverts to assert the rejection envelope. A future fixture-seeding contract bump
+# can restore an "event" happy-path that exercises full verification end-to-end.
 [[connector_contract.fixtures]]
 provider = "svn"
-name = "happy path"
+name = "happy path (fail-closed when no secret)"
 kind = "webhook"
 headers = { "x-svn-event" = "commit", "x-svn-revision" = "123" }
 body_json = { event = "commit", repository = { url = "https://svn.example.com/repos/widgets" }, revision = 123, author = "ada", changed_paths = ["/trunk/README.md"] }
-expect_type = "event"
-expect_kind = "commit"
-expect_signature_state = "unsigned"
-expect_event_count = 1
-expect_payload_contains = { provider = "svn", raw = { event = "commit" } }
+expect_type = "reject"
+expect_response_status = 401
+expect_event_count = 0
 
+# F14 (verify before parse) means malformed JSON without a configured secret hits the F3
+# fail-closed path first and returns 401 instead of 400.
 [[connector_contract.fixtures]]
 provider = "svn"
 name = "malformed payload"
@@ -63,5 +68,5 @@ kind = "webhook"
 headers = { "x-svn-event" = "commit" }
 body = "{not json"
 expect_type = "reject"
-expect_response_status = 400
+expect_response_status = 401
 expect_event_count = 0

@@ -8,7 +8,7 @@ let PROVIDER_ID = "svn"
 
 let STATE_KEY = "harn-svn-connector.state"
 
-let DEFAULT_API_BASE_URL = "http://svn.example.com"
+let DEFAULT_API_BASE_URL = "https://svn.example.com"
 
 let ENV_PREFIX = "SVN"
 
@@ -90,7 +90,14 @@ pub fn activate(bindings = []) {
   return {provider: PROVIDER_ID, bindings: len(by_id.keys())}
 }
 
-/** Clear connector lifecycle state. */
+/**
+ * Clear connector lifecycle state.
+ *
+ * @host_only — this entry point wipes cached binding state including secrets resolved during
+ * activate(). It must only be invoked by the orchestrator's connector lifecycle, never from
+ * untrusted pipeline nodes or external callers. Full caller-identity gating is tracked as a
+ * host responsibility.
+ */
 pub fn shutdown() {
   store_delete(STATE_KEY)
   return {provider: PROVIDER_ID, active: false}
@@ -99,8 +106,19 @@ pub fn shutdown() {
 @complexity(allow)
 /** Verify and normalize an inbound webhook request. */
 pub fn normalize_inbound(raw) {
-  let body_text = raw?.body_text ?? raw?.body ?? ""
   let headers = raw?.headers ?? {}
+  // Resolve the signed surface (raw bytes preferred over body_text) before parsing JSON so an
+  // unsigned/oversized payload cannot exhaust the parser ahead of signature verification.
+  let signed = __signed_surface(raw)
+  if is_err(signed) {
+    return __reject_err(unwrap_err(signed))
+  }
+  let body_text = unwrap(signed)
+  let verified = __verify_signature(raw, headers, body_text)
+  if is_err(verified) {
+    return __reject_err(unwrap_err(verified))
+  }
+  let signature_status = unwrap(verified)
   let parsed = try {
     json_parse(body_text)
   }
@@ -108,11 +126,6 @@ pub fn normalize_inbound(raw) {
     return __reject(400, "invalid_json", PROVIDER_ID + " payload body is not valid JSON")
   }
   let payload = unwrap(parsed)
-  let verified = __verify_signature(raw, headers, body_text)
-  if is_err(verified) {
-    return __reject_err(unwrap_err(verified))
-  }
-  let signature_status = unwrap(verified)
   let base_event = __base_event(payload, headers)
   if base_event == nil || base_event == "" {
     return __reject(400, "missing_event", "missing " + PROVIDER_ID + " event header or payload event")
@@ -230,6 +243,8 @@ fn __reject_err(err) {
   let code = err?.code ?? "rejected"
   let status = if code == "invalid_signature" || code == "missing_signature" {
     401
+  } else if code == "missing_binding_id" || code == "missing_body" || code == "invalid_body" {
+    400
   } else {
     400
   }
@@ -259,8 +274,11 @@ fn __supports_event(event) {
     return true
   }
   let normalized = __normalize_kind(event)
+  // Match either an exact normalized name or a fully-qualified subkind. A bare prefix is
+  // rejected so e.g. "commit_x" never spoofs "commit".
   for supported in SUPPORTED_EVENTS {
-    if starts_with(normalized, __normalize_kind(supported)) {
+    let supported_norm = __normalize_kind(supported)
+    if normalized == supported_norm || starts_with(normalized, supported_norm + ".") {
       return true
     }
   }
@@ -268,9 +286,14 @@ fn __supports_event(event) {
 }
 
 fn __verify_signature(raw, headers, body_text) {
+  let binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
+  if binding_id == nil || trim(to_string(binding_id)) == "" {
+    return __err("missing_binding_id", "request did not include a binding_id; cannot resolve secret")
+  }
   let secret = __signing_secret(raw)
+  // Fail-closed: refuse delivery when no signing secret is configured for this binding.
   if secret == nil || trim(to_string(secret)) == "" {
-    return Ok("unsigned")
+    return __err("missing_signature", "no signing secret configured for this binding")
   }
   let provided = __header(headers, SIGNATURE_HEADER)
   if provided == nil || provided == "" {
@@ -282,27 +305,54 @@ fn __verify_signature(raw, headers, body_text) {
   return __err("invalid_signature", SIGNATURE_HEADER + " did not match the configured signing_secret")
 }
 
-fn __signing_secret(raw) {
-  let direct = raw?.signing_secret ?? raw?.secret ?? raw?.webhook_secret ?? raw?.config?.signing_secret
-    ?? raw?.secrets?.signing_secret
-  if direct != nil && trim(to_string(direct)) != "" {
-    return to_string(direct)
+/**
+ * Resolve the byte surface that was signed. Prefer raw.body_text when present; otherwise
+ * base64-decode raw.body_base64. Reject when neither field is present so we never HMAC over
+ * "" by accident.
+ */
+fn __signed_surface(raw) {
+  let body_text = raw?.body_text ?? raw?.body
+  if body_text != nil {
+    return Ok(to_string(body_text))
   }
+  let body_b64 = raw?.body_base64
+  if body_b64 != nil && trim(to_string(body_b64)) != "" {
+    let decoded = try {
+      base64_decode(to_string(body_b64))
+    }
+    if is_err(decoded) {
+      return __err("invalid_body", "body_base64 is not valid base64")
+    }
+    return Ok(unwrap(decoded))
+  }
+  return __err("missing_body", "request has neither body_text nor body_base64")
+}
+
+/**
+ * Resolve the signing secret from trusted sources only: orchestrator ctx, the per-binding
+ * state seeded via activate(), or the process env. raw.* fields are attacker-controlled and
+ * must not feed the HMAC key. binding_id is required upstream; we refuse the single-binding
+ * fallback so that secrets are never resolved without an explicit binding pointer.
+ */
+fn __signing_secret(raw) {
   let state = __state()
   let ctx_secret = state?.ctx?.signing_secret ?? state?.ctx?.secrets?.signing_secret
   if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
     return to_string(ctx_secret)
   }
-  let bindings = state?.bindings ?? {}
   let binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
-  if binding_id != nil {
-    let binding = bindings.get(binding_id)
-    return binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
+  if binding_id == nil || trim(to_string(binding_id)) == "" {
+    return nil
   }
-  let values = bindings.values()
-  if len(values) == 1 {
-    let binding = values[0]
-    return binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
+  let bindings = state?.bindings ?? {}
+  let binding = bindings.get(binding_id)
+  let bound = binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
+  if bound != nil && trim(to_string(bound)) != "" {
+    return to_string(bound)
+  }
+  let env_secret = env(ENV_PREFIX + "_SIGNING_SECRET")
+  if env_secret != nil && trim(to_string(env_secret)) != "" {
+    return to_string(env_secret)
   }
   return nil
 }
@@ -375,17 +425,20 @@ fn __resource(payload) {
 }
 
 fn __dedupe_key(base_event, payload, raw, headers, body_text) {
+  // Trust only the host-set delivery header — payload?.id / .uuid / .delivery_id / .revision
+  // are attacker-controlled and would let a sender either suppress replay protection or evade
+  // it at will.
   for header in DELIVERY_HEADERS {
     let value = __header(headers, header)
     if value != nil && value != "" {
       return PROVIDER_ID + ":" + __normalize_kind(base_event) + ":" + to_string(value)
     }
   }
-  let payload_id = payload?.id ?? payload?.uuid ?? payload?.delivery_id ?? payload?.revision
-  if payload_id != nil {
-    return PROVIDER_ID + ":" + __normalize_kind(base_event) + ":" + to_string(payload_id)
-  }
-  return PROVIDER_ID + ":" + __normalize_kind(base_event) + ":" + sha256(body_text)
+  let binding_id = raw?.metadata?.binding_id ?? raw?.binding_id ?? ""
+  let received_at = raw?.received_at ?? raw?.occurred_at ?? ""
+  let body_b64 = raw?.body_base64 ?? body_text
+  return PROVIDER_ID + ":" + __normalize_kind(base_event) + ":"
+    + sha256(to_string(body_b64) + "|" + to_string(received_at) + "|" + to_string(binding_id))
 }
 
 fn __normalized_headers(headers) {
@@ -412,10 +465,30 @@ fn __outbound_config(args) {
   let env_base = ENV_PREFIX + "_API_BASE_URL"
   let env_token = ENV_PREFIX + "_TOKEN"
   let api_base_url = args?.api_base_url ?? env_or(env_base, DEFAULT_API_BASE_URL)
-  let access_token = args?.access_token ?? args?.token ?? args?.personal_access_token ?? args?.app_password
-    ?? args?.secrets?.access_token
-    ?? env(env_token)
+  // F11: only treat an explicit access_token / token as Bearer credentials. Do NOT alias
+  // app_password or personal_access_token into Bearer for SVN — that's wrong for HTTP Basic
+  // servers and would leak the password to a misconfigured endpoint.
+  let access_token = args?.access_token ?? args?.token ?? args?.secrets?.access_token ?? env(env_token)
   return Ok({api_base_url: to_string(api_base_url), access_token: access_token})
+}
+
+/**
+ * Build the Authorization header for an SVN-style request. SVN does not use Bearer tokens
+ * natively; we prefer HTTP Basic when `username` (or env $SVN_USERNAME) and `password`
+ * (or env $SVN_PASSWORD) are present, and only attach Bearer when the caller passed an
+ * explicit `access_token` / `token`.
+ */
+fn __authorization_header(args, cfg) {
+  let username = args?.username ?? args?.secrets?.username ?? env(ENV_PREFIX + "_USERNAME")
+  let password = args?.password ?? args?.secrets?.password ?? env(ENV_PREFIX + "_PASSWORD")
+  if username != nil && trim(to_string(username)) != "" && password != nil
+    && trim(to_string(password)) != "" {
+    return "Basic " + base64_encode(to_string(username) + ":" + to_string(password))
+  }
+  if cfg.access_token != nil && trim(to_string(cfg.access_token)) != "" {
+    return "Bearer " + to_string(cfg.access_token)
+  }
+  return nil
 }
 
 fn __config_keys() {
@@ -524,16 +597,31 @@ fn __api_request(args) {
   }
   let method = uppercase(to_string(args?.method ?? "GET"))
   let path = args?.path ?? args?.url_path ?? ""
+  let url_result = __api_url(cfg.api_base_url, path)
+  if is_err(url_result) {
+    return url_result
+  }
+  let url = unwrap(url_result)
+  // F2: refuse to attach Authorization over plaintext http://, regardless of how it was
+  // configured, so we never leak Basic/Bearer credentials in cleartext.
+  let is_plaintext = starts_with(to_string(cfg.api_base_url ?? ""), "http://")
   var options = {headers: {Accept: "application/json"}, retry: {max: 0, backoff_ms: 0}}
-  if cfg.access_token != nil && trim(to_string(cfg.access_token)) != "" {
-    options.headers["Authorization"] = "Bearer " + to_string(cfg.access_token)
+  let auth_header = __authorization_header(args ?? {}, cfg)
+  if auth_header != nil {
+    if is_plaintext {
+      return __err(
+        "insecure_transport",
+        PROVIDER_ID + " refuses to attach Authorization over plaintext http://; configure https://",
+      )
+    }
+    options.headers["Authorization"] = auth_header
   }
   if args?.body != nil {
     options["body"] = json_stringify(args.body)
     options.headers["Content-Type"] = "application/json"
   }
   let response_result = try {
-    http_request(method, __api_url(cfg.api_base_url, path), options)
+    http_request(method, url, options)
   }
   if is_err(response_result) {
     return __err("transport", to_string(unwrap_err(response_result)))
@@ -609,20 +697,31 @@ fn __append_query(target, key, value) {
   return target + separator + url_encode(key) + "=" + url_encode(value)
 }
 
+/**
+ * SSRF defence: refuse absolute-URL paths so the configured api_base_url (and any attached
+ * Authorization header) cannot be redirected to attacker-chosen hosts. Callers must pass a
+ * relative path; absolute URLs return Err.
+ */
 fn __api_url(api_base_url, path) {
   let base = trim(to_string(api_base_url))
-  if starts_with(path, "http://") || starts_with(path, "https://") {
-    return path
+  let path_str = to_string(path ?? "")
+  if starts_with(path_str, "http://") || starts_with(path_str, "https://") {
+    return __err(
+      "invalid_path",
+      PROVIDER_ID + " api request path must be relative; absolute URLs are rejected",
+    )
   }
   let prefix = if ends_with(base, "/") {
     base[0:len(base) - 1]
   } else {
     base
   }
-  if starts_with(path, "/") {
-    return prefix + path
+  let suffix = if starts_with(path_str, "/") {
+    path_str
+  } else {
+    "/" + path_str
   }
-  return prefix + "/" + path
+  return Ok(prefix + suffix)
 }
 
 fn __repo_ref(args) {
