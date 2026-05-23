@@ -16,41 +16,85 @@ pipeline default() {
   assert_eq(provider_id(), "svn", "provider id")
   assert_eq(kinds()[0], "webhook", "first kind")
   assert_eq(payload_schema().harn_schema_name, "SvnEventPayload", "schema")
+  // Seed the signing secret via init/activate — never via inbound `raw.*` fields.
   init({signing_secret: "secret"})
   let activated = activate([{id: "primary", path: "/hooks/svn", secrets: {signing_secret: "secret"}}])
   assert_eq(activated.bindings, 1, "activation count")
   let body = "{\"event\":\"commit\",\"repository\":{\"url\":\"https://svn.example.com/repos/widgets\"},\"revision\":123,\"author\":\"ada\",\"changed_paths\":[\"/trunk/README.md\"]}"
   let headers = {"x-svn-event": "commit", "x-svn-revision": "delivery-1"}
   let signature = "sha256=" + hmac_sha256("secret", body)
-  let raw = {signing_secret: "secret", body_text: body, headers: headers + {"x-harn-svn-signature": signature}}
+  let raw = {binding_id: "primary", body_text: body, headers: headers + {"x-harn-svn-signature": signature}}
   let normalized = normalize_inbound(raw)
   assert_eq(normalized.type, "event", "envelope type")
   assert_eq(normalized.event.kind, "commit", "event kind")
   assert_eq(normalized.event.signature_status.state, "verified", "signed status")
   assert(normalized.event.dedupe_key != nil && normalized.event.dedupe_key != "", "dedupe key")
   let bad_signature = normalize_inbound(
-    {
-      signing_secret: "secret",
-      body_text: body,
-      headers: headers + {"x-harn-svn-signature": "sha256=00"},
-    },
+    {binding_id: "primary", body_text: body, headers: headers + {"x-harn-svn-signature": "sha256=00"}},
   )
   assert_eq(bad_signature.type, "reject", "bad signature rejects")
   assert_eq(bad_signature.reject.status, 401, "bad signature status")
-  let invalid_json = normalize_inbound({body_text: "{bad json", headers: headers})
+  let invalid_json = normalize_inbound(
+    {
+      binding_id: "primary",
+      body_text: "{bad json",
+      headers: headers + {"x-harn-svn-signature": "sha256=" + hmac_sha256("secret", "{bad json")},
+    },
+  )
   assert_eq(invalid_json.type, "reject", "invalid json rejects")
-  http_mock_clear()
-  http_mock("GET", "http://svn.example.com/projects", {status: 200, body: json_stringify({ok: true})})
-  let response = call(
+  // F3: missing signature header is fail-closed.
+  let unsigned = normalize_inbound({binding_id: "primary", body_text: body, headers: headers})
+  assert_eq(unsigned.type, "reject", "unsigned rejects")
+  assert_eq(unsigned.reject.status, 401, "unsigned 401")
+  // F8: missing binding_id is fail-closed.
+  let no_binding = normalize_inbound({body_text: body, headers: headers + {"x-harn-svn-signature": signature}})
+  assert_eq(no_binding.type, "reject", "missing binding_id rejects")
+  assert_eq(no_binding.reject.status, 400, "missing binding_id 400")
+  // F1: absolute-URL path in api.request is rejected (SSRF guard).
+  let ssrf = call(
+    "api.request",
+    {
+      api_base_url: "https://svn.example.com",
+      path: "https://attacker.example.com/steal",
+      access_token: "token",
+    },
+  )
+  assert(is_err(ssrf), "absolute URL path rejected")
+  // F2: refuse Bearer over plaintext http://.
+  let plaintext_reject = call(
     "api.request",
     {api_base_url: "http://svn.example.com", path: "/projects", access_token: "token"},
   )
+  assert(is_err(plaintext_reject), "Bearer over http:// rejected")
+  assert_eq(unwrap_err(plaintext_reject).code, "insecure_transport", "Bearer over http:// error code")
+  http_mock_clear()
+  http_mock(
+    "GET",
+    "https://svn.example.com/projects",
+    {status: 200, body: json_stringify({ok: true})},
+  )
+  let response = call(
+    "api.request",
+    {api_base_url: "https://svn.example.com", path: "/projects", access_token: "token"},
+  )
   assert_eq(response.status, 200, "api request status")
   assert_eq(response.body.ok, true, "api request body")
+  http_mock_clear()
+  // F11: SVN-style Basic auth from username+password.
+  http_mock("GET", "https://svn.example.com/repos", {status: 200, body: json_stringify({ok: true})})
+  let basic_response = call(
+    "api.request",
+    {api_base_url: "https://svn.example.com", path: "/repos", username: "ada", password: "hunter2"},
+  )
+  // F11: SVN uses HTTP Basic when username + password are present (no Bearer alias for
+  // app_password). The mock harness doesn't surface the Authorization header in
+  // http_mock_calls; we assert the call succeeded (which implies the auth path didn't error)
+  // and the unit-test of __authorization_header covers header shape directly.
+  assert_eq(basic_response.body.ok, true, "basic auth api request succeeds")
+  http_mock_clear()
   let unsupported = call("unknown", {})
   assert(is_err(unsupported), "unknown method errors")
   let tick = poll_tick({cursor: "123", repository_url: "https://svn.example.com/repos/widgets"})
   assert_eq(tick.type, "batch", "poll tick batch")
-  http_mock_clear()
   shutdown()
 }
