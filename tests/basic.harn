@@ -12,6 +12,7 @@ import {
 
 @complexity(allow)
 pipeline default() {
+  egress_policy({allow: ["svn.example.com"], default: "deny"})
   shutdown()
   assert_eq(provider_id(), "svn", "provider id")
   assert_eq(kinds()[0], "webhook", "first kind")
