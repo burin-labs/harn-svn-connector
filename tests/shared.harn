@@ -11,6 +11,7 @@ fn signed_raw(body, secret, headers) {
 
 @complexity(allow)
 pipeline default() {
+  egress_policy({allow: ["svn.example.com"], default: "deny"})
   shutdown()
   init({signing_secret: "secret"})
   activate([{id: "primary", path: "/hooks/svn", secrets: {signing_secret: "secret"}}])

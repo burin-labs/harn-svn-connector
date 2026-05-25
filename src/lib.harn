@@ -350,9 +350,14 @@ fn __signing_secret(raw) {
   if bound != nil && trim(to_string(bound)) != "" {
     return to_string(bound)
   }
-  let env_secret = env(ENV_PREFIX + "_SIGNING_SECRET")
-  if env_secret != nil && trim(to_string(env_secret)) != "" {
-    return to_string(env_secret)
+  let env_secret_result = try {
+    harness.env.get(ENV_PREFIX + "_SIGNING_SECRET")
+  }
+  if !is_err(env_secret_result) {
+    let env_secret = unwrap(env_secret_result)
+    if env_secret != nil && trim(to_string(env_secret)) != "" {
+      return to_string(env_secret)
+    }
   }
   return nil
 }
@@ -464,11 +469,11 @@ fn __normalized_headers(headers) {
 fn __outbound_config(args) {
   let env_base = ENV_PREFIX + "_API_BASE_URL"
   let env_token = ENV_PREFIX + "_TOKEN"
-  let api_base_url = args?.api_base_url ?? env_or(env_base, DEFAULT_API_BASE_URL)
+  let api_base_url = args?.api_base_url ?? harness.env.get_or(env_base, DEFAULT_API_BASE_URL)
   // F11: only treat an explicit access_token / token as Bearer credentials. Do NOT alias
   // app_password or personal_access_token into Bearer for SVN — that's wrong for HTTP Basic
   // servers and would leak the password to a misconfigured endpoint.
-  let access_token = args?.access_token ?? args?.token ?? args?.secrets?.access_token ?? env(env_token)
+  let access_token = args?.access_token ?? args?.token ?? args?.secrets?.access_token ?? harness.env.get(env_token)
   return Ok({api_base_url: to_string(api_base_url), access_token: access_token})
 }
 
@@ -479,8 +484,8 @@ fn __outbound_config(args) {
  * explicit `access_token` / `token`.
  */
 fn __authorization_header(args, cfg) {
-  let username = args?.username ?? args?.secrets?.username ?? env(ENV_PREFIX + "_USERNAME")
-  let password = args?.password ?? args?.secrets?.password ?? env(ENV_PREFIX + "_PASSWORD")
+  let username = args?.username ?? args?.secrets?.username ?? harness.env.get(ENV_PREFIX + "_USERNAME")
+  let password = args?.password ?? args?.secrets?.password ?? harness.env.get(ENV_PREFIX + "_PASSWORD")
   if username != nil && trim(to_string(username)) != "" && password != nil
     && trim(to_string(password)) != "" {
     return "Basic " + base64_encode(to_string(username) + ":" + to_string(password))
@@ -621,7 +626,7 @@ fn __api_request(args) {
     options.headers["Content-Type"] = "application/json"
   }
   let response_result = try {
-    http_request(method, url, options)
+    harness.net.request(method, url, options)
   }
   if is_err(response_result) {
     return __err("transport", to_string(unwrap_err(response_result)))
