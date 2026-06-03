@@ -93,6 +93,53 @@ pipeline default() {
   // and the unit-test of __authorization_header covers header shape directly.
   assert_eq(basic_response.body.ok, true, "basic auth api request succeeds")
   http_mock_clear()
+  // SVN-appropriate read helpers replace the removed gitea-shaped stubs.
+  http_mock(
+    "GET",
+    "https://svn.example.com/info",
+    {status: 200, body: json_stringify({root: "https://svn.example.com/repos/widgets", youngest: 123})},
+  )
+  let info = call("repository.info", {api_base_url: "https://svn.example.com", access_token: "token"})
+  assert_eq(info.body.youngest, 123, "repository.info reads youngest revision")
+  http_mock_clear()
+  http_mock(
+    "GET",
+    "https://svn.example.com/revisions/123",
+    {status: 200, body: json_stringify({revision: 123, author: "ada"})},
+  )
+  let rev = call(
+    "revision.get",
+    {api_base_url: "https://svn.example.com", access_token: "token", revision: 123},
+  )
+  assert_eq(rev.body.revision, 123, "revision.get reads a single revision")
+  let missing_rev = call("revision.get", {api_base_url: "https://svn.example.com", access_token: "token"})
+  assert(is_err(missing_rev), "revision.get requires revision")
+  assert_eq(unwrap_err(missing_rev).code, "invalid_args", "revision.get missing revision code")
+  http_mock_clear()
+  http_mock(
+    "GET",
+    "https://svn.example.com/log?from=100&to=123",
+    {status: 200, body: json_stringify({entries: [{revision: 123}]})},
+  )
+  let log = call(
+    "revision.log",
+    {
+      access_token: "token",
+      api_base_url: "https://svn.example.com",
+      from_revision: 100,
+      to_revision: 123,
+    },
+  )
+  assert_eq(len(log.body.entries), 1, "revision.log reads a revision range")
+  http_mock_clear()
+  // Removed gitea-shaped stubs must no longer be dispatchable on an SVN connector.
+  let removed_pr = call("pull_requests.comment", {})
+  assert(is_err(removed_pr), "pull_requests.comment is not an SVN method")
+  assert_eq(unwrap_err(removed_pr).code, "method_not_found", "removed PR method code")
+  let removed_issue = call("issues.comment", {})
+  assert(is_err(removed_issue), "issues.comment is not an SVN method")
+  let removed_status = call("commit_status.set", {})
+  assert(is_err(removed_status), "commit_status.set is not an SVN method")
   let unsupported = call("unknown", {})
   assert(is_err(unsupported), "unknown method errors")
   let tick = poll_tick({cursor: "123", repository_url: "https://svn.example.com/repos/widgets"})
