@@ -20,15 +20,12 @@ let SUPPORTED_EVENTS = ["commit", "branch", "tag", "property_change"]
 
 let DELIVERY_HEADERS = ["x-svn-revision", "x-request-id"]
 
-let OUTBOUND_METHODS = [
-  "api.request",
-  "paginate",
-  "pull_requests.comment",
-  "pull_requests.update",
-  "issues.comment",
-  "commit_status.set",
-  "repository_file.get",
-]
+// SVN is an inbound-first connector (post-commit hook + polling revision scanner). Its outbound
+// surface is intentionally minimal and read-only: Subversion has no pull-request / issue / commit-
+// status write API, so the previously copied gitea-shaped stubs were removed. The remaining methods
+// read revision/log and repository info over the configured SVN HTTP (DAV) endpoint; use the
+// generic `api.request` / `paginate` escape hatches for anything else the server exposes.
+let OUTBOUND_METHODS = ["api.request", "paginate", "repository.info", "revision.get", "revision.log"]
 
 /** Return this connector's provider id. */
 pub fn provider_id() {
@@ -167,47 +164,13 @@ pub fn call(method, args = {}) {
   if method == "paginate" {
     return __paginate(args ?? {})
   }
-  if method == "pull_requests.comment" {
-    return __api_request(
-      args
-        + {
-        method: "POST",
-        path: args?.path ?? __pull_request_comment_path(args),
-        body: {body: args?.body ?? args?.comment},
-      },
-    )
+  if method == "repository.info" {
+    return __repository_info(args ?? {})
   }
-  if method == "pull_requests.update" {
-    return __api_request(
-      args
-        + {
-        method: "PATCH",
-        path: args?.path ?? __pull_request_path(args),
-        body: __body_without(args, __config_keys() + ["owner", "repo", "pull_request", "pull_request_id", "path"]),
-      },
-    )
+  if method == "revision.get" {
+    return __revision_get(args ?? {})
   }
-  if method == "issues.comment" {
-    return __api_request(
-      args
-        + {
-        method: "POST",
-        path: args?.path ?? __issue_comment_path(args),
-        body: {body: args?.body ?? args?.comment},
-      },
-    )
-  }
-  if method == "commit_status.set" {
-    return __api_request(
-      args
-        + {
-        method: "POST",
-        path: args?.path ?? __commit_status_path(args),
-        body: __body_without(args, __config_keys() + ["owner", "repo", "sha", "path"]),
-      },
-    )
-  }
-  return __api_request(args + {method: "GET", path: args?.path ?? __repository_file_path(args)})
+  return __revision_log(args ?? {})
 }
 
 fn __state() {
@@ -496,18 +459,6 @@ fn __authorization_header(args, cfg) {
   return nil
 }
 
-fn __config_keys() {
-  return ["api_base_url", "access_token", "token", "personal_access_token", "app_password", "secrets"]
-}
-
-fn __body_without(args, keys) {
-  let body = args ?? {} + {}
-  for key in keys {
-    body.remove(key)
-  }
-  return body
-}
-
 fn __rate_limit_config(args) {
   let direct = args?.rate_limit
   if direct != nil {
@@ -729,31 +680,69 @@ fn __api_url(api_base_url, path) {
   return Ok(prefix + suffix)
 }
 
-fn __repo_ref(args) {
-  let owner = args?.owner ?? args?.workspace ?? args?.project ?? ""
-  let repo = args?.repo ?? args?.repository ?? ""
-  if owner != "" && repo != "" {
-    return url_encode(to_string(owner)) + "/" + url_encode(to_string(repo))
+/**
+ * Resolve the repository-relative path to read. SVN servers expose a repository at a base URL;
+ * callers pass `repo_path` (e.g. "/trunk") to scope a read, defaulting to the repository root.
+ */
+fn __svn_repo_path(args) {
+  let repo_path = args?.repo_path ?? args?.path_in_repo ?? ""
+  let trimmed = trim(to_string(repo_path))
+  if trimmed == "" {
+    return ""
   }
-  return url_encode(to_string(args?.repo_full_name ?? args?.repository_full_name ?? ""))
+  if starts_with(trimmed, "/") {
+    return trimmed
+  }
+  return "/" + trimmed
 }
 
-fn __pull_request_path(args) {
-  return "/repos/" + __repo_ref(args) + "/pulls/" + to_string(args?.pull_request ?? args?.pull_request_id)
+/**
+ * Read Subversion repository info (root, latest/youngest revision) over the configured SVN HTTP
+ * (DAV) endpoint. Read-only; SVN has no outbound write API in this connector's scope. Override the
+ * exact path with `path`.
+ */
+fn __repository_info(args) {
+  let path = args?.path ?? ("/info" + __svn_repo_path(args))
+  return __api_request(args + {method: "GET", path: path})
 }
 
-fn __pull_request_comment_path(args) {
-  return __pull_request_path(args) + "/comments"
+/**
+ * Read a single Subversion revision (`svn log -r <rev>` / `svn info -r <rev>` semantics) over the
+ * configured SVN HTTP endpoint. Required arg: `revision`. Read-only. Override the path with `path`.
+ */
+fn __revision_get(args) {
+  let revision = args?.revision ?? args?.rev
+  if revision == nil || trim(to_string(revision)) == "" {
+    return __err("invalid_args", "revision.get requires revision")
+  }
+  let path = args?.path
+    ?? ("/revisions/" + url_encode(to_string(revision)) + __svn_repo_path(args))
+  return __api_request(args + {method: "GET", path: path})
 }
 
-fn __issue_comment_path(args) {
-  return "/repos/" + __repo_ref(args) + "/issues/" + to_string(args?.issue ?? args?.issue_id) + "/comments"
-}
-
-fn __commit_status_path(args) {
-  return "/repos/" + __repo_ref(args) + "/statuses/" + to_string(args?.sha ?? args?.commit)
-}
-
-fn __repository_file_path(args) {
-  return "/repos/" + __repo_ref(args) + "/contents/" + url_encode(to_string(args?.path ?? ""))
+/**
+ * Read a Subversion revision log range (`svn log` semantics) over the configured SVN HTTP
+ * endpoint. Optional args: `from_revision` / `to_revision` to bound the range, `limit` to cap
+ * entries. Read-only. Override the path with `path`.
+ */
+@complexity(allow)
+fn __revision_log(args) {
+  let base = "/log" + __svn_repo_path(args)
+  var query_parts = []
+  if args?.from_revision != nil && trim(to_string(args.from_revision)) != "" {
+    query_parts = query_parts + ["from=" + url_encode(to_string(args.from_revision))]
+  }
+  if args?.to_revision != nil && trim(to_string(args.to_revision)) != "" {
+    query_parts = query_parts + ["to=" + url_encode(to_string(args.to_revision))]
+  }
+  if args?.limit != nil && trim(to_string(args.limit)) != "" {
+    query_parts = query_parts + ["limit=" + url_encode(to_string(args.limit))]
+  }
+  let query = if len(query_parts) == 0 {
+    ""
+  } else {
+    "?" + join(query_parts, "&")
+  }
+  let path = args?.path ?? (base + query)
+  return __api_request(args + {method: "GET", path: path})
 }

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Removed the vestigial gitea-shaped outbound `call` stubs that made no sense for Subversion
+  (forge parity, C5): `pull_requests.comment`, `pull_requests.update`, `issues.comment`, and
+  `commit_status.set`, plus the `repos/<owner>/<repo>/...` path builders and the now-unused
+  `__config_keys` / `__body_without` helpers. Subversion has no pull-request, issue, or
+  commit-status write API, so these were misleading. They now return `method_not_found`.
+- Reduced the outbound surface to SVN-appropriate read-only operations over the configured SVN
+  HTTP (DAV) endpoint:
+  - `repository.info` — read repository root / youngest revision (`svn info` semantics).
+  - `revision.get` — read a single revision (`svn log -r <rev>` / `svn info -r <rev>` semantics);
+    requires `revision`.
+  - `revision.log` — read a revision log range (`svn log` semantics); optional `from_revision`
+    / `to_revision` / `limit`.
+  - The generic `api.request` / `paginate` escape hatches are unchanged for anything else the
+    server exposes.
+- **SVN is an inbound-first connector.** Its event surface is the post-commit hook
+  (`normalize_inbound`) plus the polling revision scanner (`poll_tick`); both are unchanged. The
+  outbound surface is intentionally minimal and read-only because Subversion exposes no
+  meaningful outbound write API in this connector's scope.
 - Security sweep 2026-05-23 (hardening, fail-closed defaults):
   - **F1 (CRITICAL) SSRF:** `__api_url` rejects absolute-URL `path` arguments so the
     configured `api_base_url` (and any attached `Authorization` header) cannot be redirected
