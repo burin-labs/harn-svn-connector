@@ -69,7 +69,7 @@ pub fn activate(bindings = []) {
   var by_id = {}
   var seen_paths = {}
   for binding in bindings ?? [] {
-    let binding_id = binding?.binding_id ?? binding?.id ?? "binding-" + to_string(len(by_id.keys()))
+    let binding_id = (binding?.binding_id ?? binding?.id ?? "binding-") + to_string(len(by_id.keys()))
     let path = binding?.path ?? binding?.match?.path
     if path != nil && path != "" {
       if seen_paths.get(path) {
@@ -188,7 +188,7 @@ fn __err(code, message) {
 }
 
 fn __err_with(code, message, extra) {
-  return Err({code: code, message: message} + extra ?? {})
+  return Err({code: code, message: message} + (extra ?? {}))
 }
 
 fn __reject(status, code, message) {
