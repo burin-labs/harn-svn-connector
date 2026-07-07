@@ -4,28 +4,28 @@ import {
   verify_hmac_signature,
 } from "std/connectors/shared"
 
-let PROVIDER_ID = "svn"
+const PROVIDER_ID = "svn"
 
-let STATE_KEY = "harn-svn-connector.state"
+const STATE_KEY = "harn-svn-connector.state"
 
-let DEFAULT_API_BASE_URL = "https://svn.example.com"
+const DEFAULT_API_BASE_URL = "https://svn.example.com"
 
-let ENV_PREFIX = "SVN"
+const ENV_PREFIX = "SVN"
 
-let SIGNATURE_HEADER = "x-harn-svn-signature"
+const SIGNATURE_HEADER = "x-harn-svn-signature"
 
-let EVENT_HEADER = "x-svn-event"
+const EVENT_HEADER = "x-svn-event"
 
-let SUPPORTED_EVENTS = ["commit", "branch", "tag", "property_change"]
+const SUPPORTED_EVENTS = ["commit", "branch", "tag", "property_change"]
 
-let DELIVERY_HEADERS = ["x-svn-revision", "x-request-id"]
+const DELIVERY_HEADERS = ["x-svn-revision", "x-request-id"]
 
 // SVN is an inbound-first connector (post-commit hook + polling revision scanner). Its outbound
 // surface is intentionally minimal and read-only: Subversion has no pull-request / issue / commit-
 // status write API, so the previously copied gitea-shaped stubs were removed. The remaining methods
 // read revision/log and repository info over the configured SVN HTTP (DAV) endpoint; use the
 // generic `api.request` / `paginate` escape hatches for anything else the server exposes.
-let OUTBOUND_METHODS = ["api.request", "paginate", "repository.info", "revision.get", "revision.log"]
+const OUTBOUND_METHODS = ["api.request", "paginate", "repository.info", "revision.get", "revision.log"]
 
 /** Return this connector's provider id. */
 pub fn provider_id() {
@@ -59,18 +59,18 @@ pub fn payload_schema() {
 
 /** Initialize connector state with orchestrator context. */
 pub fn init(ctx = nil) {
-  let next = __state() + {initialized: true, ctx: ctx ?? {}}
+  const next = __state() + {initialized: true, ctx: ctx ?? {}}
   __set_state(next)
   return next
 }
 
 /** Activate configured trigger bindings. */
 pub fn activate(bindings = []) {
-  var by_id = {}
-  var seen_paths = {}
+  let by_id = {}
+  let seen_paths = {}
   for binding in bindings ?? [] {
-    let binding_id = (binding?.binding_id ?? binding?.id ?? "binding-") + to_string(len(by_id.keys()))
-    let path = binding?.path ?? binding?.match?.path
+    const binding_id = (binding?.binding_id ?? binding?.id ?? "binding-") + to_string(len(by_id.keys()))
+    const path = binding?.path ?? binding?.match?.path
     if path != nil && path != "" {
       if seen_paths.get(path) {
         return __err(
@@ -82,7 +82,7 @@ pub fn activate(bindings = []) {
     }
     by_id[binding_id] = binding + {binding_id: binding_id}
   }
-  let next = __state() + {bindings: by_id, active: true}
+  const next = __state() + {bindings: by_id, active: true}
   __set_state(next)
   return {provider: PROVIDER_ID, bindings: len(by_id.keys())}
 }
@@ -103,27 +103,27 @@ pub fn shutdown() {
 @complexity(allow)
 /** Verify and normalize an inbound webhook request. */
 pub fn normalize_inbound(raw) {
-  let headers = raw?.headers ?? {}
+  const headers = raw?.headers ?? {}
   // Resolve the signed surface (raw bytes preferred over body_text) before parsing JSON so an
   // unsigned/oversized payload cannot exhaust the parser ahead of signature verification.
-  let signed = __signed_surface(raw)
+  const signed = __signed_surface(raw)
   if is_err(signed) {
     return __reject_err(unwrap_err(signed))
   }
-  let body_text = unwrap(signed)
-  let verified = __verify_signature(raw, headers, body_text)
+  const body_text = unwrap(signed)
+  const verified = __verify_signature(raw, headers, body_text)
   if is_err(verified) {
     return __reject_err(unwrap_err(verified))
   }
-  let signature_status = unwrap(verified)
-  let parsed = try {
+  const signature_status = unwrap(verified)
+  const parsed = try {
     json_parse(body_text)
   }
   if is_err(parsed) {
     return __reject(400, "invalid_json", PROVIDER_ID + " payload body is not valid JSON")
   }
-  let payload = unwrap(parsed)
-  let base_event = __base_event(payload, headers)
+  const payload = unwrap(parsed)
+  const base_event = __base_event(payload, headers)
   if base_event == nil || base_event == "" {
     return __reject(400, "missing_event", "missing " + PROVIDER_ID + " event header or payload event")
   }
@@ -134,13 +134,13 @@ pub fn normalize_inbound(raw) {
       "unsupported " + PROVIDER_ID + " event `" + to_string(base_event) + "`",
     )
   }
-  let event = __build_event(base_event, payload, raw, headers, signature_status, body_text)
+  const event = __build_event(base_event, payload, raw, headers, signature_status, body_text)
   return {type: "event", event: event}
 }
 
 /** Run one polling tick for providers that support polling. */
 pub fn poll_tick(ctx = nil) {
-  let cursor = ctx?.cursor ?? ctx?.state?.last_revision
+  const cursor = ctx?.cursor ?? ctx?.state?.last_revision
   return {
     type: "batch",
     events: [],
@@ -203,8 +203,8 @@ fn __reject(status, code, message) {
 }
 
 fn __reject_err(err) {
-  let code = err?.code ?? "rejected"
-  let status = if code == "invalid_signature" || code == "missing_signature" {
+  const code = err?.code ?? "rejected"
+  const status = if code == "invalid_signature" || code == "missing_signature" {
     401
   } else if code == "missing_binding_id" || code == "missing_body" || code == "invalid_body" {
     400
@@ -215,7 +215,7 @@ fn __reject_err(err) {
 }
 
 fn __header(headers, name) {
-  let wanted = lowercase(name)
+  const wanted = lowercase(name)
   for entry in (headers ?? {}).entries() {
     if lowercase(trim(to_string(entry.key))) == wanted {
       return trim(to_string(entry.value))
@@ -225,7 +225,7 @@ fn __header(headers, name) {
 }
 
 fn __base_event(payload, headers) {
-  let from_header = __header(headers, EVENT_HEADER)
+  const from_header = __header(headers, EVENT_HEADER)
   if from_header != nil && from_header != "" {
     return to_string(from_header)
   }
@@ -236,11 +236,11 @@ fn __supports_event(event) {
   if contains(SUPPORTED_EVENTS, event) {
     return true
   }
-  let normalized = __normalize_kind(event)
+  const normalized = __normalize_kind(event)
   // Match either an exact normalized name or a fully-qualified subkind. A bare prefix is
   // rejected so e.g. "commit_x" never spoofs "commit".
   for supported in SUPPORTED_EVENTS {
-    let supported_norm = __normalize_kind(supported)
+    const supported_norm = __normalize_kind(supported)
     if normalized == supported_norm || starts_with(normalized, supported_norm + ".") {
       return true
     }
@@ -249,16 +249,16 @@ fn __supports_event(event) {
 }
 
 fn __verify_signature(raw, headers, body_text) {
-  let binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
+  const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
   if binding_id == nil || trim(to_string(binding_id)) == "" {
     return __err("missing_binding_id", "request did not include a binding_id; cannot resolve secret")
   }
-  let secret = __signing_secret(raw)
+  const secret = __signing_secret(raw)
   // Fail-closed: refuse delivery when no signing secret is configured for this binding.
   if secret == nil || trim(to_string(secret)) == "" {
     return __err("missing_signature", "no signing secret configured for this binding")
   }
-  let provided = __header(headers, SIGNATURE_HEADER)
+  const provided = __header(headers, SIGNATURE_HEADER)
   if provided == nil || provided == "" {
     return __err("missing_signature", SIGNATURE_HEADER + " header missing but a signing_secret is configured")
   }
@@ -274,13 +274,13 @@ fn __verify_signature(raw, headers, body_text) {
  * "" by accident.
  */
 fn __signed_surface(raw) {
-  let body_text = raw?.body_text ?? raw?.body
+  const body_text = raw?.body_text ?? raw?.body
   if body_text != nil {
     return Ok(to_string(body_text))
   }
-  let body_b64 = raw?.body_base64
+  const body_b64 = raw?.body_base64
   if body_b64 != nil && trim(to_string(body_b64)) != "" {
-    let decoded = try {
+    const decoded = try {
       base64_decode(to_string(body_b64))
     }
     if is_err(decoded) {
@@ -298,26 +298,26 @@ fn __signed_surface(raw) {
  * fallback so that secrets are never resolved without an explicit binding pointer.
  */
 fn __signing_secret(raw) {
-  let state = __state()
-  let ctx_secret = state?.ctx?.signing_secret ?? state?.ctx?.secrets?.signing_secret
+  const state = __state()
+  const ctx_secret = state?.ctx?.signing_secret ?? state?.ctx?.secrets?.signing_secret
   if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
     return to_string(ctx_secret)
   }
-  let binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
+  const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
   if binding_id == nil || trim(to_string(binding_id)) == "" {
     return nil
   }
-  let bindings = state?.bindings ?? {}
-  let binding = bindings.get(binding_id)
-  let bound = binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
+  const bindings = state?.bindings ?? {}
+  const binding = bindings.get(binding_id)
+  const bound = binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
   if bound != nil && trim(to_string(bound)) != "" {
     return to_string(bound)
   }
-  let env_secret_result = try {
+  const env_secret_result = try {
     harness.env.get(ENV_PREFIX + "_SIGNING_SECRET")
   }
   if !is_err(env_secret_result) {
-    let env_secret = unwrap(env_secret_result)
+    const env_secret = unwrap(env_secret_result)
     if env_secret != nil && trim(to_string(env_secret)) != "" {
       return to_string(env_secret)
     }
@@ -327,7 +327,7 @@ fn __signing_secret(raw) {
 
 @complexity(allow)
 fn __build_event(base_event, payload, raw, headers, signature_status, body_text) {
-  let kind = __event_kind(base_event, payload)
+  const kind = __event_kind(base_event, payload)
   return {
     kind: kind,
     occurred_at: raw?.occurred_at ?? payload?.updated_at ?? payload?.created_at ?? payload?.timestamp,
@@ -353,8 +353,8 @@ fn __signature_status(status) {
 }
 
 fn __event_kind(base_event, payload) {
-  let normalized = __normalize_kind(base_event)
-  let action = payload?.action ?? payload?.pullrequest?.state ?? payload?.object_attributes?.action
+  const normalized = __normalize_kind(base_event)
+  const action = payload?.action ?? payload?.pullrequest?.state ?? payload?.object_attributes?.action
   if action == nil || action == "" || contains(normalized, ".") {
     return normalized
   }
@@ -366,7 +366,7 @@ fn __normalize_kind(value) {
 }
 
 fn __repository(payload) {
-  let repo = payload?.repository ?? payload?.repo ?? {}
+  const repo = payload?.repository ?? payload?.repo ?? {}
   return {
     id: repo?.id ?? repo?.uuid,
     name: repo?.name,
@@ -376,7 +376,7 @@ fn __repository(payload) {
 }
 
 fn __actor(payload) {
-  let actor = payload?.sender ?? payload?.user ?? payload?.actor ?? payload?.pusher ?? {}
+  const actor = payload?.sender ?? payload?.user ?? payload?.actor ?? payload?.pusher ?? {}
   return {
     id: actor?.id ?? actor?.uuid,
     username: actor?.login ?? actor?.username ?? actor?.nickname ?? actor?.canonical_name,
@@ -397,30 +397,30 @@ fn __dedupe_key(base_event, payload, raw, headers, body_text) {
   // are attacker-controlled and would let a sender either suppress replay protection or evade
   // it at will.
   for header in DELIVERY_HEADERS {
-    let value = __header(headers, header)
+    const value = __header(headers, header)
     if value != nil && value != "" {
       return PROVIDER_ID + ":" + __normalize_kind(base_event) + ":" + to_string(value)
     }
   }
-  let binding_id = raw?.metadata?.binding_id ?? raw?.binding_id ?? ""
-  let received_at = raw?.received_at ?? raw?.occurred_at ?? ""
-  let body_b64 = raw?.body_base64 ?? body_text
+  const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id ?? ""
+  const received_at = raw?.received_at ?? raw?.occurred_at ?? ""
+  const body_b64 = raw?.body_base64 ?? body_text
   return PROVIDER_ID + ":" + __normalize_kind(base_event) + ":"
     + sha256(to_string(body_b64) + "|" + to_string(received_at) + "|" + to_string(binding_id))
 }
 
 fn __normalized_headers(headers) {
-  var normalized = {}
-  let event = __header(headers, EVENT_HEADER)
+  let normalized = {}
+  const event = __header(headers, EVENT_HEADER)
   if event != nil {
     normalized[EVENT_HEADER] = event
   }
-  let signature = __header(headers, SIGNATURE_HEADER)
+  const signature = __header(headers, SIGNATURE_HEADER)
   if signature != nil {
     normalized[SIGNATURE_HEADER] = signature
   }
   for header in DELIVERY_HEADERS {
-    let value = __header(headers, header)
+    const value = __header(headers, header)
     if value != nil {
       normalized[header] = value
     }
@@ -430,13 +430,13 @@ fn __normalized_headers(headers) {
 
 @complexity(allow)
 fn __outbound_config(args) {
-  let env_base = ENV_PREFIX + "_API_BASE_URL"
-  let env_token = ENV_PREFIX + "_TOKEN"
-  let api_base_url = args?.api_base_url ?? harness.env.get_or(env_base, DEFAULT_API_BASE_URL)
+  const env_base = ENV_PREFIX + "_API_BASE_URL"
+  const env_token = ENV_PREFIX + "_TOKEN"
+  const api_base_url = args?.api_base_url ?? harness.env.get_or(env_base, DEFAULT_API_BASE_URL)
   // F11: only treat an explicit access_token / token as Bearer credentials. Do NOT alias
   // app_password or personal_access_token into Bearer for SVN — that's wrong for HTTP Basic
   // servers and would leak the password to a misconfigured endpoint.
-  let access_token = args?.access_token ?? args?.token ?? args?.secrets?.access_token ?? harness.env.get(env_token)
+  const access_token = args?.access_token ?? args?.token ?? args?.secrets?.access_token ?? harness.env.get(env_token)
   return Ok({api_base_url: to_string(api_base_url), access_token: access_token})
 }
 
@@ -447,8 +447,8 @@ fn __outbound_config(args) {
  * explicit `access_token` / `token`.
  */
 fn __authorization_header(args, cfg) {
-  let username = args?.username ?? args?.secrets?.username ?? harness.env.get(ENV_PREFIX + "_USERNAME")
-  let password = args?.password ?? args?.secrets?.password ?? harness.env.get(ENV_PREFIX + "_PASSWORD")
+  const username = args?.username ?? args?.secrets?.username ?? harness.env.get(ENV_PREFIX + "_USERNAME")
+  const password = args?.password ?? args?.secrets?.password ?? harness.env.get(ENV_PREFIX + "_PASSWORD")
   if username != nil && trim(to_string(username)) != "" && password != nil
     && trim(to_string(password)) != "" {
     return "Basic " + base64_encode(to_string(username) + ":" + to_string(password))
@@ -460,15 +460,15 @@ fn __authorization_header(args, cfg) {
 }
 
 fn __rate_limit_config(args) {
-  let direct = args?.rate_limit
+  const direct = args?.rate_limit
   if direct != nil {
     return direct
   }
-  let state = __state()
-  let binding_id = args?.binding_id ?? args?.metadata?.binding_id
+  const state = __state()
+  const binding_id = args?.binding_id ?? args?.metadata?.binding_id
   if binding_id != nil {
-    let binding = state?.bindings?.get(binding_id)
-    let from_binding = binding?.rate_limit ?? binding?.config?.rate_limit
+    const binding = state?.bindings?.get(binding_id)
+    const from_binding = binding?.rate_limit ?? binding?.config?.rate_limit
     if from_binding != nil {
       return from_binding
     }
@@ -482,14 +482,14 @@ fn __rate_limit_scope(args, config) {
 }
 
 fn __rate_limit_acquire(args) {
-  let config = __rate_limit_config(args)
+  const config = __rate_limit_config(args)
   if config == nil {
     return Ok({allowed: true, retry_after_ms: 0})
   }
-  let scope = __rate_limit_scope(args, config)
-  let state = __state()
-  var buckets = state?.rate_limit_buckets ?? {}
-  let result = rate_limit_token_bucket(buckets.get(scope), config, nil)
+  const scope = __rate_limit_scope(args, config)
+  const state = __state()
+  let buckets = state?.rate_limit_buckets ?? {}
+  const result = rate_limit_token_bucket(buckets.get(scope), config, nil)
   buckets[scope] = result.state
   __set_state(state + {rate_limit_buckets: buckets})
   if !result.allowed {
@@ -504,11 +504,11 @@ fn __rate_limit_acquire(args) {
 }
 
 fn __int_header(headers, name) {
-  let value = __header(headers, name)
+  const value = __header(headers, name)
   if value == nil || value == "" {
     return nil
   }
-  let parsed = try {
+  const parsed = try {
     to_int(value)
   }
   if is_ok(parsed) {
@@ -518,11 +518,11 @@ fn __int_header(headers, name) {
 }
 
 fn __retry_after_ms(headers) {
-  let value = __header(headers, "retry-after")
+  const value = __header(headers, "retry-after")
   if value == nil || value == "" {
     return nil
   }
-  let secs = try {
+  const secs = try {
     to_int(value)
   }
   if is_ok(secs) {
@@ -542,27 +542,27 @@ fn __response_rate_limit(headers) {
 
 @complexity(allow)
 fn __api_request(args) {
-  let config = __outbound_config(args ?? {})
+  const config = __outbound_config(args ?? {})
   if is_err(config) {
     return config
   }
-  let cfg = unwrap(config)
-  let permit = __rate_limit_acquire(args ?? {})
+  const cfg = unwrap(config)
+  const permit = __rate_limit_acquire(args ?? {})
   if is_err(permit) {
     return permit
   }
-  let method = uppercase(to_string(args?.method ?? "GET"))
-  let path = args?.path ?? args?.url_path ?? ""
-  let url_result = __api_url(cfg.api_base_url, path)
+  const method = uppercase(to_string(args?.method ?? "GET"))
+  const path = args?.path ?? args?.url_path ?? ""
+  const url_result = __api_url(cfg.api_base_url, path)
   if is_err(url_result) {
     return url_result
   }
-  let url = unwrap(url_result)
+  const url = unwrap(url_result)
   // F2: refuse to attach Authorization over plaintext http://, regardless of how it was
   // configured, so we never leak Basic/Bearer credentials in cleartext.
-  let is_plaintext = starts_with(to_string(cfg.api_base_url ?? ""), "http://")
-  var options = {headers: {Accept: "application/json"}, retry: {max: 0, backoff_ms: 0}}
-  let auth_header = __authorization_header(args ?? {}, cfg)
+  const is_plaintext = starts_with(to_string(cfg.api_base_url ?? ""), "http://")
+  let options = {headers: {Accept: "application/json"}, retry: {max: 0, backoff_ms: 0}}
+  const auth_header = __authorization_header(args ?? {}, cfg)
   if auth_header != nil {
     if is_plaintext {
       return __err(
@@ -576,14 +576,14 @@ fn __api_request(args) {
     options["body"] = json_stringify(args.body)
     options.headers["Content-Type"] = "application/json"
   }
-  let response_result = try {
+  const response_result = try {
     harness.net.request(method, url, options)
   }
   if is_err(response_result) {
     return __err("transport", to_string(unwrap_err(response_result)))
   }
-  let response = unwrap(response_result)
-  let rate_limit = __response_rate_limit(response.headers ?? {})
+  const response = unwrap(response_result)
+  const rate_limit = __response_rate_limit(response.headers ?? {})
   if response.status < 200 || response.status >= 300 {
     return __err_with(
       "transport",
@@ -591,11 +591,11 @@ fn __api_request(args) {
       {status: response.status, headers: response.headers, body: response.body, rate_limit: rate_limit},
     )
   }
-  let raw_body = response.body ?? ""
+  const raw_body = response.body ?? ""
   if trim(raw_body) == "" {
     return {status: response.status, headers: response.headers, body: nil, rate_limit: rate_limit}
   }
-  let parsed = try {
+  const parsed = try {
     json_parse(raw_body)
   }
   if is_err(parsed) {
@@ -610,14 +610,14 @@ fn __api_request(args) {
 
 @complexity(allow)
 fn __paginate(args) {
-  let cursor_param = args?.cursor_param ?? "cursor"
-  let cursor_path = args?.cursor_path ?? "/next_cursor"
-  let items_path = args?.items_path
-  let max_pages = args?.max_pages ?? 100
-  let initial_cursor = args?.initial_cursor
-  let request_args = args ?? {}
-  let initial_path = request_args?.path ?? ""
-  let fetch_fn = { _url, cursor ->
+  const cursor_param = args?.cursor_param ?? "cursor"
+  const cursor_path = args?.cursor_path ?? "/next_cursor"
+  const items_path = args?.items_path
+  const max_pages = args?.max_pages ?? 100
+  const initial_cursor = args?.initial_cursor
+  const request_args = args ?? {}
+  const initial_path = request_args?.path ?? ""
+  const fetch_fn = { _url, cursor ->
     let target_path = if cursor == nil {
       initial_path
     } else {
@@ -629,7 +629,7 @@ fn __paginate(args) {
     }
     return response.body ?? {}
   }
-  let attempt = try {
+  const attempt = try {
     paginate_cursor(
       initial_path,
       fetch_fn,
@@ -638,14 +638,14 @@ fn __paginate(args) {
     )
   }
   if is_err(attempt) {
-    let err = unwrap_err(attempt)
+    const err = unwrap_err(attempt)
     return __err_with(err?.code ?? "paginate_failed", err?.message ?? "paginate failed", err ?? {})
   }
   return unwrap(attempt)
 }
 
 fn __append_query(target, key, value) {
-  let separator = if contains(target, "?") {
+  const separator = if contains(target, "?") {
     "&"
   } else {
     "?"
@@ -659,20 +659,20 @@ fn __append_query(target, key, value) {
  * relative path; absolute URLs return Err.
  */
 fn __api_url(api_base_url, path) {
-  let base = trim(to_string(api_base_url))
-  let path_str = to_string(path ?? "")
+  const base = trim(to_string(api_base_url))
+  const path_str = to_string(path ?? "")
   if starts_with(path_str, "http://") || starts_with(path_str, "https://") {
     return __err(
       "invalid_path",
       PROVIDER_ID + " api request path must be relative; absolute URLs are rejected",
     )
   }
-  let prefix = if ends_with(base, "/") {
+  const prefix = if ends_with(base, "/") {
     base[0:len(base) - 1]
   } else {
     base
   }
-  let suffix = if starts_with(path_str, "/") {
+  const suffix = if starts_with(path_str, "/") {
     path_str
   } else {
     "/" + path_str
@@ -685,8 +685,8 @@ fn __api_url(api_base_url, path) {
  * callers pass `repo_path` (e.g. "/trunk") to scope a read, defaulting to the repository root.
  */
 fn __svn_repo_path(args) {
-  let repo_path = args?.repo_path ?? args?.path_in_repo ?? ""
-  let trimmed = trim(to_string(repo_path))
+  const repo_path = args?.repo_path ?? args?.path_in_repo ?? ""
+  const trimmed = trim(to_string(repo_path))
   if trimmed == "" {
     return ""
   }
@@ -702,7 +702,7 @@ fn __svn_repo_path(args) {
  * exact path with `path`.
  */
 fn __repository_info(args) {
-  let path = args?.path ?? ("/info" + __svn_repo_path(args))
+  const path = args?.path ?? ("/info" + __svn_repo_path(args))
   return __api_request(args + {method: "GET", path: path})
 }
 
@@ -711,11 +711,11 @@ fn __repository_info(args) {
  * configured SVN HTTP endpoint. Required arg: `revision`. Read-only. Override the path with `path`.
  */
 fn __revision_get(args) {
-  let revision = args?.revision ?? args?.rev
+  const revision = args?.revision ?? args?.rev
   if revision == nil || trim(to_string(revision)) == "" {
     return __err("invalid_args", "revision.get requires revision")
   }
-  let path = args?.path
+  const path = args?.path
     ?? ("/revisions/" + url_encode(to_string(revision)) + __svn_repo_path(args))
   return __api_request(args + {method: "GET", path: path})
 }
@@ -727,8 +727,8 @@ fn __revision_get(args) {
  */
 @complexity(allow)
 fn __revision_log(args) {
-  let base = "/log" + __svn_repo_path(args)
-  var query_parts = []
+  const base = "/log" + __svn_repo_path(args)
+  let query_parts = []
   if args?.from_revision != nil && trim(to_string(args.from_revision)) != "" {
     query_parts = query_parts + ["from=" + url_encode(to_string(args.from_revision))]
   }
@@ -738,11 +738,11 @@ fn __revision_log(args) {
   if args?.limit != nil && trim(to_string(args.limit)) != "" {
     query_parts = query_parts + ["limit=" + url_encode(to_string(args.limit))]
   }
-  let query = if len(query_parts) == 0 {
+  const query = if len(query_parts) == 0 {
     ""
   } else {
     "?" + join(query_parts, "&")
   }
-  let path = args?.path ?? (base + query)
+  const path = args?.path ?? (base + query)
   return __api_request(args + {method: "GET", path: path})
 }
