@@ -15,23 +15,23 @@ pipeline default() {
   shutdown()
   init({signing_secret: "secret"})
   activate([{id: "primary", path: "/hooks/svn", secrets: {signing_secret: "secret"}}])
-  let body = "{\"event\":\"commit\",\"repository\":{\"url\":\"https://svn.example.com/repos/widgets\"},\"revision\":42,\"author\":\"ada\",\"changed_paths\":[\"/trunk/file.txt\"]}"
-  let headers = {"x-svn-event": "commit", "x-svn-revision": "delivery-7"}
+  const body = "{\"event\":\"commit\",\"repository\":{\"url\":\"https://svn.example.com/repos/widgets\"},\"revision\":42,\"author\":\"ada\",\"changed_paths\":[\"/trunk/file.txt\"]}"
+  const headers = {"x-svn-event": "commit", "x-svn-revision": "delivery-7"}
   // HMAC verification: "sha256=" prefix and raw hex are both accepted; missing/mismatched
   // are rejected. Secrets and binding_id flow through trusted state, not raw.*.
-  let prefixed = normalize_inbound(signed_raw(body, "secret", headers))
+  const prefixed = normalize_inbound(signed_raw(body, "secret", headers))
   assert_eq(prefixed.event.signature_status.state, "verified", "sha256= prefix accepted")
-  let raw_hex = hmac_sha256("secret", body)
-  let raw_signed = {binding_id: "primary", body_text: body, headers: headers + {"x-harn-svn-signature": raw_hex}}
+  const raw_hex = hmac_sha256("secret", body)
+  const raw_signed = {binding_id: "primary", body_text: body, headers: headers + {"x-harn-svn-signature": raw_hex}}
   assert_eq(
     normalize_inbound(raw_signed).event.signature_status.state,
     "verified",
     "raw hex accepted",
   )
-  let missing = normalize_inbound({binding_id: "primary", body_text: body, headers: headers})
+  const missing = normalize_inbound({binding_id: "primary", body_text: body, headers: headers})
   assert_eq(missing.type, "reject", "missing signature rejects")
   assert_eq(missing.reject.status, 401, "missing signature status")
-  let mismatched = normalize_inbound(
+  const mismatched = normalize_inbound(
     {
       binding_id: "primary",
       body_text: body,
@@ -51,22 +51,22 @@ pipeline default() {
       headers: {"x-ratelimit-limit": "100", "x-ratelimit-remaining": "99", "x-ratelimit-reset": "60"},
     },
   )
-  let bucket_args = {
+  const bucket_args = {
     api_base_url: "https://svn.example.com",
     path: "/projects",
     access_token: "token",
     rate_limit: {capacity: 2, refill_tokens: 1, refill_interval_ms: 60000, scope_key: "test-bucket"},
   }
-  let first_call = call("api.request", bucket_args)
+  const first_call = call("api.request", bucket_args)
   assert_eq(first_call.status, 200, "first call ok")
   assert_eq(first_call.rate_limit.limit, 100, "rate-limit header parsed")
   assert_eq(first_call.rate_limit.remaining, 99, "rate-limit remaining")
   assert_eq(first_call.rate_limit.reset, 60, "rate-limit reset")
-  let second_call = call("api.request", bucket_args)
+  const second_call = call("api.request", bucket_args)
   assert_eq(second_call.status, 200, "second call ok")
-  let third_call = call("api.request", bucket_args)
+  const third_call = call("api.request", bucket_args)
   assert(is_err(third_call), "third call exhausts bucket")
-  let denied = unwrap_err(third_call)
+  const denied = unwrap_err(third_call)
   assert_eq(denied.code, "rate_limited", "rate-limit error code")
   assert(denied.retry_after_ms > 0, "retry_after_ms surfaced")
   // Retry-After header is normalized to milliseconds.
@@ -76,7 +76,7 @@ pipeline default() {
     "https://svn.example.com/wait",
     {status: 200, body: json_stringify({}), headers: {"retry-after": "5"}},
   )
-  let waited = call("api.request", {api_base_url: "https://svn.example.com", path: "/wait", access_token: "token"})
+  const waited = call("api.request", {api_base_url: "https://svn.example.com", path: "/wait", access_token: "token"})
   assert_eq(waited.rate_limit.retry_after_ms, 5000, "retry-after seconds -> ms")
   // Cursor pagination follows next_cursor across pages and merges items.
   http_mock_clear()
@@ -93,7 +93,7 @@ pipeline default() {
     "https://svn.example.com/log?cursor=page-2",
     {status: 200, body: json_stringify({results: [{revision: 3}], next_cursor: nil})},
   )
-  let paged = call("paginate", {api_base_url: "https://svn.example.com", path: "/log", access_token: "token"})
+  const paged = call("paginate", {api_base_url: "https://svn.example.com", path: "/log", access_token: "token"})
   assert_eq(len(paged.items), 3, "paginated item count")
   assert_eq(paged.items[2].revision, 3, "second page merged")
   assert_eq(paged.complete, true, "pagination complete")
@@ -113,7 +113,7 @@ pipeline default() {
     "https://svn.example.com/revisions?after=tok-2",
     {status: 200, body: json_stringify({data: {nodes: [{id: "b"}], page: {next: nil, hasMore: false}}})},
   )
-  let custom = call(
+  const custom = call(
     "paginate",
     {
       api_base_url: "https://svn.example.com",
@@ -140,7 +140,7 @@ pipeline default() {
     "https://svn.example.com/loop?cursor=tok-1",
     {status: 200, body: json_stringify({results: [{n: 1}], next_cursor: "tok-2"})},
   )
-  let capped = call(
+  const capped = call(
     "paginate",
     {api_base_url: "https://svn.example.com", path: "/loop", access_token: "token", max_pages: 2},
   )
