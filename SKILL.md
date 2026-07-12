@@ -7,8 +7,9 @@ Use `harn-svn-connector` when wiring Harn triggers or outbound helpers for Subve
 - Provider id: `svn`
 - Trigger kinds: `webhook, poll`
 - Supported events: `commit, branch, tag, property_change`
-- Webhook verification: `optional_hmac`
-- Outbound helpers: `api.request`, `pull_requests.comment`, `pull_requests.update`, `issues.comment`, `commit_status.set`, `repository_file.get`
+- Webhook verification: `hmac_sha256`
+- Outbound helpers: `repository.info`, `revision.get`, `revision.log`,
+  `api.request`, and `paginate`
 
 ## Trigger recipe
 
@@ -22,5 +23,8 @@ handler = "handlers::on_svn_event"
 secrets = { signing_secret = "svn/signing-secret" }
 ```
 
-For SourceHut, use a configured `public_key` secret instead of `signing_secret`.
-For SVN polling, add a `poll` trigger and run `harn connector check . --provider svn --run-poll-tick`.
+Webhook bindings require a valid HMAC signature. For revision polling, use a
+`poll` trigger; `poll_tick` returns the next revision batch from its cursor.
+
+Validate webhook and polling behavior with
+`harn connector test . --provider svn --run-poll-tick`.

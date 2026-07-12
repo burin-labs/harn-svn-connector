@@ -61,7 +61,7 @@ override the exact request path:
 ```sh
 harn check src/lib.harn
 harn fmt --check src/lib.harn tests/*.harn
-for test in tests/*.harn; do harn run "$test" || exit 1; done
+harn connector test . --provider svn --run-poll-tick
 ```
 
 ## License
