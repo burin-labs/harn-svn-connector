@@ -1,6 +1,7 @@
 # harn-svn-connector
 
-Pure-Harn Subversion connector: post-commit hook normalization and polling revision scanner surface.
+Pure-Harn Subversion connector: post-commit hook normalization and polling
+revision scanner surface.
 
 This package implements the Harn Connector interface contract v1 for `svn`.
 It normalizes inbound webhook payloads to the tagged `NormalizeResult` envelope,
@@ -21,7 +22,7 @@ PR/issue/commit-status methods — those would be misleading for SVN.
 harn add github.com/burin-labs/harn-svn-connector@v0.1.0
 ```
 
-Until a version is tagged, depend on a path checkout:
+Use a path checkout for unreleased `main` or local multi-repo development:
 
 ```toml
 [dependencies]
@@ -30,9 +31,10 @@ harn-svn-connector = { path = "../harn-svn-connector" }
 
 ## Webhook verification
 
-The connector accepts unsigned events only when no verification material is
-configured. Configure `signing_secret` for HMAC-based providers or `public_key`
-for SourceHut Ed25519 verification.
+Subversion hook deliveries must be signed. Configure `signing_secret` or
+`SVN_SIGNING_SECRET`; the connector verifies the `x-harn-svn-signature`
+HMAC-SHA256 header against the raw request body and rejects requests with no
+configured secret, missing binding id, missing signature, or invalid signature.
 
 ## Authentication
 
