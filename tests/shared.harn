@@ -15,14 +15,19 @@ pipeline default() {
   shutdown()
   init({signing_secret: "secret"})
   activate([{id: "primary", path: "/hooks/svn", secrets: {signing_secret: "secret"}}])
-  const body = "{\"event\":\"commit\",\"repository\":{\"url\":\"https://svn.example.com/repos/widgets\"},\"revision\":42,\"author\":\"ada\",\"changed_paths\":[\"/trunk/file.txt\"]}"
+  const body =
+    "{\"event\":\"commit\",\"repository\":{\"url\":\"https://svn.example.com/repos/widgets\"},\"revision\":42,\"author\":\"ada\",\"changed_paths\":[\"/trunk/file.txt\"]}"
   const headers = {"x-svn-event": "commit", "x-svn-revision": "delivery-7"}
   // HMAC verification: "sha256=" prefix and raw hex are both accepted; missing/mismatched
   // are rejected. Secrets and binding_id flow through trusted state, not raw.*.
   const prefixed = normalize_inbound(signed_raw(body, "secret", headers))
   assert_eq(prefixed.event.signature_status.state, "verified", "sha256= prefix accepted")
   const raw_hex = hmac_sha256("secret", body)
-  const raw_signed = {binding_id: "primary", body_text: body, headers: headers + {"x-harn-svn-signature": raw_hex}}
+  const raw_signed = {
+    binding_id: "primary",
+    body_text: body,
+    headers: headers + {"x-harn-svn-signature": raw_hex},
+  }
   assert_eq(
     normalize_inbound(raw_signed).event.signature_status.state,
     "verified",
@@ -48,14 +53,23 @@ pipeline default() {
     {
       status: 200,
       body: json_stringify({ok: true}),
-      headers: {"x-ratelimit-limit": "100", "x-ratelimit-remaining": "99", "x-ratelimit-reset": "60"},
+      headers: {
+        "x-ratelimit-limit": "100",
+        "x-ratelimit-remaining": "99",
+        "x-ratelimit-reset": "60",
+      },
     },
   )
   const bucket_args = {
     api_base_url: "https://svn.example.com",
     path: "/projects",
     access_token: "token",
-    rate_limit: {capacity: 2, refill_tokens: 1, refill_interval_ms: 60000, scope_key: "test-bucket"},
+    rate_limit: {
+      capacity: 2,
+      refill_tokens: 1,
+      refill_interval_ms: 60000,
+      scope_key: "test-bucket",
+    },
   }
   const first_call = call("api.request", bucket_args)
   assert_eq(first_call.status, 200, "first call ok")
@@ -76,7 +90,10 @@ pipeline default() {
     "https://svn.example.com/wait",
     {status: 200, body: json_stringify({}), headers: {"retry-after": "5"}},
   )
-  const waited = call("api.request", {api_base_url: "https://svn.example.com", path: "/wait", access_token: "token"})
+  const waited = call(
+    "api.request",
+    {api_base_url: "https://svn.example.com", path: "/wait", access_token: "token"},
+  )
   assert_eq(waited.rate_limit.retry_after_ms, 5000, "retry-after seconds -> ms")
   // Cursor pagination follows next_cursor across pages and merges items.
   http_mock_clear()
@@ -93,7 +110,10 @@ pipeline default() {
     "https://svn.example.com/log?cursor=page-2",
     {status: 200, body: json_stringify({results: [{revision: 3}], next_cursor: nil})},
   )
-  const paged = call("paginate", {api_base_url: "https://svn.example.com", path: "/log", access_token: "token"})
+  const paged = call(
+    "paginate",
+    {api_base_url: "https://svn.example.com", path: "/log", access_token: "token"},
+  )
   assert_eq(len(paged.items), 3, "paginated item count")
   assert_eq(paged.items[2].revision, 3, "second page merged")
   assert_eq(paged.complete, true, "pagination complete")
@@ -111,7 +131,10 @@ pipeline default() {
   http_mock(
     "GET",
     "https://svn.example.com/revisions?after=tok-2",
-    {status: 200, body: json_stringify({data: {nodes: [{id: "b"}], page: {next: nil, hasMore: false}}})},
+    {
+      status: 200,
+      body: json_stringify({data: {nodes: [{id: "b"}], page: {next: nil, hasMore: false}}}),
+    },
   )
   const custom = call(
     "paginate",
