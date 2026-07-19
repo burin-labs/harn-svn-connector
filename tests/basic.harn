@@ -19,19 +19,30 @@ pipeline default() {
   assert_eq(payload_schema().harn_schema_name, "SvnEventPayload", "schema")
   // Seed the signing secret via init/activate — never via inbound `raw.*` fields.
   init({signing_secret: "secret"})
-  const activated = activate([{id: "primary", path: "/hooks/svn", secrets: {signing_secret: "secret"}}])
+  const activated = activate(
+    [{id: "primary", path: "/hooks/svn", secrets: {signing_secret: "secret"}}],
+  )
   assert_eq(activated.bindings, 1, "activation count")
-  const body = "{\"event\":\"commit\",\"repository\":{\"url\":\"https://svn.example.com/repos/widgets\"},\"revision\":123,\"author\":\"ada\",\"changed_paths\":[\"/trunk/README.md\"]}"
+  const body =
+    "{\"event\":\"commit\",\"repository\":{\"url\":\"https://svn.example.com/repos/widgets\"},\"revision\":123,\"author\":\"ada\",\"changed_paths\":[\"/trunk/README.md\"]}"
   const headers = {"x-svn-event": "commit", "x-svn-revision": "delivery-1"}
   const signature = "sha256=" + hmac_sha256("secret", body)
-  const raw = {binding_id: "primary", body_text: body, headers: headers + {"x-harn-svn-signature": signature}}
+  const raw = {
+    binding_id: "primary",
+    body_text: body,
+    headers: headers + {"x-harn-svn-signature": signature},
+  }
   const normalized = normalize_inbound(raw)
   assert_eq(normalized.type, "event", "envelope type")
   assert_eq(normalized.event.kind, "commit", "event kind")
   assert_eq(normalized.event.signature_status.state, "verified", "signed status")
   assert(normalized.event.dedupe_key != nil && normalized.event.dedupe_key != "", "dedupe key")
   const bad_signature = normalize_inbound(
-    {binding_id: "primary", body_text: body, headers: headers + {"x-harn-svn-signature": "sha256=00"}},
+    {
+      binding_id: "primary",
+      body_text: body,
+      headers: headers + {"x-harn-svn-signature": "sha256=00"},
+    },
   )
   assert_eq(bad_signature.type, "reject", "bad signature rejects")
   assert_eq(bad_signature.reject.status, 401, "bad signature status")
@@ -48,7 +59,9 @@ pipeline default() {
   assert_eq(unsigned.type, "reject", "unsigned rejects")
   assert_eq(unsigned.reject.status, 401, "unsigned 401")
   // F8: missing binding_id is fail-closed.
-  const no_binding = normalize_inbound({body_text: body, headers: headers + {"x-harn-svn-signature": signature}})
+  const no_binding = normalize_inbound(
+    {body_text: body, headers: headers + {"x-harn-svn-signature": signature}},
+  )
   assert_eq(no_binding.type, "reject", "missing binding_id rejects")
   assert_eq(no_binding.reject.status, 400, "missing binding_id 400")
   // F1: absolute-URL path in api.request is rejected (SSRF guard).
@@ -67,7 +80,11 @@ pipeline default() {
     {api_base_url: "http://svn.example.com", path: "/projects", access_token: "token"},
   )
   assert(is_err(plaintext_reject), "Bearer over http:// rejected")
-  assert_eq(unwrap_err(plaintext_reject).code, "insecure_transport", "Bearer over http:// error code")
+  assert_eq(
+    unwrap_err(plaintext_reject).code,
+    "insecure_transport",
+    "Bearer over http:// error code",
+  )
   http_mock_clear()
   http_mock(
     "GET",
@@ -97,9 +114,15 @@ pipeline default() {
   http_mock(
     "GET",
     "https://svn.example.com/info",
-    {status: 200, body: json_stringify({root: "https://svn.example.com/repos/widgets", youngest: 123})},
+    {
+      status: 200,
+      body: json_stringify({root: "https://svn.example.com/repos/widgets", youngest: 123}),
+    },
   )
-  const info = call("repository.info", {api_base_url: "https://svn.example.com", access_token: "token"})
+  const info = call(
+    "repository.info",
+    {api_base_url: "https://svn.example.com", access_token: "token"},
+  )
   assert_eq(info.body.youngest, 123, "repository.info reads youngest revision")
   http_mock_clear()
   http_mock(
@@ -112,7 +135,10 @@ pipeline default() {
     {api_base_url: "https://svn.example.com", access_token: "token", revision: 123},
   )
   assert_eq(rev.body.revision, 123, "revision.get reads a single revision")
-  const missing_rev = call("revision.get", {api_base_url: "https://svn.example.com", access_token: "token"})
+  const missing_rev = call(
+    "revision.get",
+    {api_base_url: "https://svn.example.com", access_token: "token"},
+  )
   assert(is_err(missing_rev), "revision.get requires revision")
   assert_eq(unwrap_err(missing_rev).code, "invalid_args", "revision.get missing revision code")
   http_mock_clear()
