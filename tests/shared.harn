@@ -10,17 +10,17 @@ fn signed_raw(body, secret, headers) {
 }
 
 @complexity(allow)
-pipeline default() {
-  egress_policy({allow: ["svn.example.com"], default: "deny"})
-  shutdown()
-  init({signing_secret: "secret"})
-  activate([{id: "primary", path: "/hooks/svn", secrets: {signing_secret: "secret"}}])
+pipeline default(harness: Harness) {
+  harness.net.egress_policy({allow: ["svn.example.com"], default: "deny"})
+  shutdown(harness)
+  init(harness, {signing_secret: "secret"})
+  activate(harness, [{id: "primary", path: "/hooks/svn", secrets: {signing_secret: "secret"}}])
   const body =
     "{\"event\":\"commit\",\"repository\":{\"url\":\"https://svn.example.com/repos/widgets\"},\"revision\":42,\"author\":\"ada\",\"changed_paths\":[\"/trunk/file.txt\"]}"
   const headers = {"x-svn-event": "commit", "x-svn-revision": "delivery-7"}
   // HMAC verification: "sha256=" prefix and raw hex are both accepted; missing/mismatched
   // are rejected. Secrets and binding_id flow through trusted state, not raw.*.
-  const prefixed = normalize_inbound(signed_raw(body, "secret", headers))
+  const prefixed = normalize_inbound(harness, signed_raw(body, "secret", headers))
   assert_eq(prefixed.event.signature_status.state, "verified", "sha256= prefix accepted")
   const raw_hex = hmac_sha256("secret", body)
   const raw_signed = {
@@ -29,14 +29,18 @@ pipeline default() {
     headers: headers + {"x-harn-svn-signature": raw_hex},
   }
   assert_eq(
-    normalize_inbound(raw_signed).event.signature_status.state,
+    normalize_inbound(harness, raw_signed).event.signature_status.state,
     "verified",
     "raw hex accepted",
   )
-  const missing = normalize_inbound({binding_id: "primary", body_text: body, headers: headers})
+  const missing = normalize_inbound(
+    harness,
+    {binding_id: "primary", body_text: body, headers: headers},
+  )
   assert_eq(missing.type, "reject", "missing signature rejects")
   assert_eq(missing.reject.status, 401, "missing signature status")
   const mismatched = normalize_inbound(
+    harness,
     {
       binding_id: "primary",
       body_text: body,
@@ -46,8 +50,8 @@ pipeline default() {
   assert_eq(mismatched.type, "reject", "mismatched signature rejects")
   // Rate-limit token bucket exhausts after capacity and returns retry_after_ms.
   // Use https:// (F2 — Bearer over plaintext http:// is refused).
-  http_mock_clear()
-  http_mock(
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://svn.example.com/projects",
     {
@@ -71,33 +75,34 @@ pipeline default() {
       scope_key: "test-bucket",
     },
   }
-  const first_call = call("api.request", bucket_args)
+  const first_call = call(harness, "api.request", bucket_args)
   assert_eq(first_call.status, 200, "first call ok")
   assert_eq(first_call.rate_limit.limit, 100, "rate-limit header parsed")
   assert_eq(first_call.rate_limit.remaining, 99, "rate-limit remaining")
   assert_eq(first_call.rate_limit.reset, 60, "rate-limit reset")
-  const second_call = call("api.request", bucket_args)
+  const second_call = call(harness, "api.request", bucket_args)
   assert_eq(second_call.status, 200, "second call ok")
-  const third_call = call("api.request", bucket_args)
+  const third_call = call(harness, "api.request", bucket_args)
   assert(is_err(third_call), "third call exhausts bucket")
   const denied = unwrap_err(third_call)
   assert_eq(denied.code, "rate_limited", "rate-limit error code")
   assert(denied.retry_after_ms > 0, "retry_after_ms surfaced")
   // Retry-After header is normalized to milliseconds.
-  http_mock_clear()
-  http_mock(
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://svn.example.com/wait",
     {status: 200, body: json_stringify({}), headers: {"retry-after": "5"}},
   )
   const waited = call(
+    harness,
     "api.request",
     {api_base_url: "https://svn.example.com", path: "/wait", access_token: "token"},
   )
   assert_eq(waited.rate_limit.retry_after_ms, 5000, "retry-after seconds -> ms")
   // Cursor pagination follows next_cursor across pages and merges items.
-  http_mock_clear()
-  http_mock(
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://svn.example.com/log",
     {
@@ -105,12 +110,13 @@ pipeline default() {
       body: json_stringify({results: [{revision: 1}, {revision: 2}], next_cursor: "page-2"}),
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     "https://svn.example.com/log?cursor=page-2",
     {status: 200, body: json_stringify({results: [{revision: 3}], next_cursor: nil})},
   )
   const paged = call(
+    harness,
     "paginate",
     {api_base_url: "https://svn.example.com", path: "/log", access_token: "token"},
   )
@@ -119,8 +125,8 @@ pipeline default() {
   assert_eq(paged.complete, true, "pagination complete")
   assert_eq(paged.next_cursor, nil, "no further cursor")
   // Pagination respects items_path / cursor_path overrides for non-default API shapes.
-  http_mock_clear()
-  http_mock(
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://svn.example.com/revisions",
     {
@@ -128,7 +134,7 @@ pipeline default() {
       body: json_stringify({data: {nodes: [{id: "a"}], page: {next: "tok-2", hasMore: true}}}),
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     "https://svn.example.com/revisions?after=tok-2",
     {
@@ -137,6 +143,7 @@ pipeline default() {
     },
   )
   const custom = call(
+    harness,
     "paginate",
     {
       api_base_url: "https://svn.example.com",
@@ -152,23 +159,24 @@ pipeline default() {
   assert_eq(custom.items[1].id, "b", "second page id")
   assert_eq(custom.complete, true, "custom pagination complete")
   // Pagination caps at max_pages and returns the residual cursor.
-  http_mock_clear()
-  http_mock(
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://svn.example.com/loop",
     {status: 200, body: json_stringify({results: [{n: 0}], next_cursor: "tok-1"})},
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     "https://svn.example.com/loop?cursor=tok-1",
     {status: 200, body: json_stringify({results: [{n: 1}], next_cursor: "tok-2"})},
   )
   const capped = call(
+    harness,
     "paginate",
     {api_base_url: "https://svn.example.com", path: "/loop", access_token: "token", max_pages: 2},
   )
   assert_eq(capped.complete, false, "max_pages stops paging")
   assert_eq(capped.next_cursor, "tok-2", "residual cursor returned")
-  http_mock_clear()
-  shutdown()
+  harness.testing.http_mock_clear()
+  shutdown(harness)
 }

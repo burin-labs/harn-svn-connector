@@ -11,15 +11,16 @@ import {
 } from "../src/lib"
 
 @complexity(allow)
-pipeline default() {
-  egress_policy({allow: ["svn.example.com"], default: "deny"})
-  shutdown()
+pipeline default(harness: Harness) {
+  harness.net.egress_policy({allow: ["svn.example.com"], default: "deny"})
+  shutdown(harness)
   assert_eq(provider_id(), "svn", "provider id")
   assert_eq(kinds()[0], "webhook", "first kind")
   assert_eq(payload_schema().harn_schema_name, "SvnEventPayload", "schema")
   // Seed the signing secret via init/activate — never via inbound `raw.*` fields.
-  init({signing_secret: "secret"})
+  init(harness, {signing_secret: "secret"})
   const activated = activate(
+    harness,
     [{id: "primary", path: "/hooks/svn", secrets: {signing_secret: "secret"}}],
   )
   assert_eq(activated.bindings, 1, "activation count")
@@ -32,12 +33,13 @@ pipeline default() {
     body_text: body,
     headers: headers + {"x-harn-svn-signature": signature},
   }
-  const normalized = normalize_inbound(raw)
+  const normalized = normalize_inbound(harness, raw)
   assert_eq(normalized.type, "event", "envelope type")
   assert_eq(normalized.event.kind, "commit", "event kind")
   assert_eq(normalized.event.signature_status.state, "verified", "signed status")
   assert(normalized.event.dedupe_key != nil && normalized.event.dedupe_key != "", "dedupe key")
   const bad_signature = normalize_inbound(
+    harness,
     {
       binding_id: "primary",
       body_text: body,
@@ -47,6 +49,7 @@ pipeline default() {
   assert_eq(bad_signature.type, "reject", "bad signature rejects")
   assert_eq(bad_signature.reject.status, 401, "bad signature status")
   const invalid_json = normalize_inbound(
+    harness,
     {
       binding_id: "primary",
       body_text: "{bad json",
@@ -55,17 +58,22 @@ pipeline default() {
   )
   assert_eq(invalid_json.type, "reject", "invalid json rejects")
   // F3: missing signature header is fail-closed.
-  const unsigned = normalize_inbound({binding_id: "primary", body_text: body, headers: headers})
+  const unsigned = normalize_inbound(
+    harness,
+    {binding_id: "primary", body_text: body, headers: headers},
+  )
   assert_eq(unsigned.type, "reject", "unsigned rejects")
   assert_eq(unsigned.reject.status, 401, "unsigned 401")
   // F8: missing binding_id is fail-closed.
   const no_binding = normalize_inbound(
+    harness,
     {body_text: body, headers: headers + {"x-harn-svn-signature": signature}},
   )
   assert_eq(no_binding.type, "reject", "missing binding_id rejects")
   assert_eq(no_binding.reject.status, 400, "missing binding_id 400")
   // F1: absolute-URL path in api.request is rejected (SSRF guard).
   const ssrf = call(
+    harness,
     "api.request",
     {
       api_base_url: "https://svn.example.com",
@@ -76,6 +84,7 @@ pipeline default() {
   assert(is_err(ssrf), "absolute URL path rejected")
   // F2: refuse Bearer over plaintext http://.
   const plaintext_reject = call(
+    harness,
     "api.request",
     {api_base_url: "http://svn.example.com", path: "/projects", access_token: "token"},
   )
@@ -85,22 +94,28 @@ pipeline default() {
     "insecure_transport",
     "Bearer over http:// error code",
   )
-  http_mock_clear()
-  http_mock(
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://svn.example.com/projects",
     {status: 200, body: json_stringify({ok: true})},
   )
   const response = call(
+    harness,
     "api.request",
     {api_base_url: "https://svn.example.com", path: "/projects", access_token: "token"},
   )
   assert_eq(response.status, 200, "api request status")
   assert_eq(response.body.ok, true, "api request body")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
   // F11: SVN-style Basic auth from username+password.
-  http_mock("GET", "https://svn.example.com/repos", {status: 200, body: json_stringify({ok: true})})
+  harness.testing.http_mock(
+    "GET",
+    "https://svn.example.com/repos",
+    {status: 200, body: json_stringify({ok: true})},
+  )
   const basic_response = call(
+    harness,
     "api.request",
     {api_base_url: "https://svn.example.com", path: "/repos", username: "ada", password: "hunter2"},
   )
@@ -109,9 +124,9 @@ pipeline default() {
   // http_mock_calls; we assert the call succeeded (which implies the auth path didn't error)
   // and the unit-test of __authorization_header covers header shape directly.
   assert_eq(basic_response.body.ok, true, "basic auth api request succeeds")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
   // SVN-appropriate read helpers replace the removed gitea-shaped stubs.
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     "https://svn.example.com/info",
     {
@@ -120,34 +135,38 @@ pipeline default() {
     },
   )
   const info = call(
+    harness,
     "repository.info",
     {api_base_url: "https://svn.example.com", access_token: "token"},
   )
   assert_eq(info.body.youngest, 123, "repository.info reads youngest revision")
-  http_mock_clear()
-  http_mock(
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://svn.example.com/revisions/123",
     {status: 200, body: json_stringify({revision: 123, author: "ada"})},
   )
   const rev = call(
+    harness,
     "revision.get",
     {api_base_url: "https://svn.example.com", access_token: "token", revision: 123},
   )
   assert_eq(rev.body.revision, 123, "revision.get reads a single revision")
   const missing_rev = call(
+    harness,
     "revision.get",
     {api_base_url: "https://svn.example.com", access_token: "token"},
   )
   assert(is_err(missing_rev), "revision.get requires revision")
   assert_eq(unwrap_err(missing_rev).code, "invalid_args", "revision.get missing revision code")
-  http_mock_clear()
-  http_mock(
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://svn.example.com/log?from=100&to=123",
     {status: 200, body: json_stringify({entries: [{revision: 123}]})},
   )
   const log = call(
+    harness,
     "revision.log",
     {
       access_token: "token",
@@ -157,18 +176,21 @@ pipeline default() {
     },
   )
   assert_eq(len(log.body.entries), 1, "revision.log reads a revision range")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
   // Removed gitea-shaped stubs must no longer be dispatchable on an SVN connector.
-  const removed_pr = call("pull_requests.comment", {})
+  const removed_pr = call(harness, "pull_requests.comment", {})
   assert(is_err(removed_pr), "pull_requests.comment is not an SVN method")
   assert_eq(unwrap_err(removed_pr).code, "method_not_found", "removed PR method code")
-  const removed_issue = call("issues.comment", {})
+  const removed_issue = call(harness, "issues.comment", {})
   assert(is_err(removed_issue), "issues.comment is not an SVN method")
-  const removed_status = call("commit_status.set", {})
+  const removed_status = call(harness, "commit_status.set", {})
   assert(is_err(removed_status), "commit_status.set is not an SVN method")
-  const unsupported = call("unknown", {})
+  const unsupported = call(harness, "unknown", {})
   assert(is_err(unsupported), "unknown method errors")
-  const tick = poll_tick({cursor: "123", repository_url: "https://svn.example.com/repos/widgets"})
+  const tick = poll_tick(
+    harness,
+    {cursor: "123", repository_url: "https://svn.example.com/repos/widgets"},
+  )
   assert_eq(tick.type, "batch", "poll tick batch")
-  shutdown()
+  shutdown(harness)
 }
