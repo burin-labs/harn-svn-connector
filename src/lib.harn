@@ -541,7 +541,7 @@ fn __rate_limit_acquire(harness: Harness, args) {
   const scope = __rate_limit_scope(args, config)
   const state = __state(harness)
   let buckets = state?.rate_limit_buckets ?? {}
-  const result = rate_limit_token_bucket(buckets.get(scope), config, nil)
+  const result = rate_limit_token_bucket(harness.clock, buckets.get(scope), config, nil)
   buckets[scope] = result.state
   __set_state(harness, state + {rate_limit_buckets: buckets})
   if !result.allowed {
