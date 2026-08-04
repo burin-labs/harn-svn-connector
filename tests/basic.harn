@@ -11,7 +11,7 @@ import {
 } from "../src/lib"
 
 @complexity(allow)
-pipeline default(harness: Harness) {
+pipeline test_basic(harness: Harness) {
   harness.net.egress_policy({allow: ["svn.example.com"], default: "deny"})
   shutdown(harness)
   assert_eq(provider_id(), "svn", "provider id")

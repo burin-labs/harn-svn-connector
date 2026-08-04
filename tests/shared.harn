@@ -10,7 +10,7 @@ fn signed_raw(body, secret, headers) {
 }
 
 @complexity(allow)
-pipeline default(harness: Harness) {
+pipeline test_shared(harness: Harness) {
   harness.net.egress_policy({allow: ["svn.example.com"], default: "deny"})
   shutdown(harness)
   init(harness, {signing_secret: "secret"})
