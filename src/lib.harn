@@ -65,8 +65,8 @@ pub fn payload_schema() {
 
 /** Initialize connector state with orchestrator context. */
 pub fn init(harness: Harness, ctx = nil) {
-  const next = __state(harness) + {initialized: true, ctx: ctx ?? {}}
-  __set_state(harness, next)
+  const next = __state(harness.runtime) + {initialized: true, ctx: ctx ?? {}}
+  __set_state(harness.runtime, next)
   return next
 }
 
@@ -89,8 +89,8 @@ pub fn activate(harness: Harness, bindings = []) {
     }
     by_id[binding_id] = binding + {binding_id: binding_id}
   }
-  const next = __state(harness) + {bindings: by_id, active: true}
-  __set_state(harness, next)
+  const next = __state(harness.runtime) + {bindings: by_id, active: true}
+  __set_state(harness.runtime, next)
   return {provider: PROVIDER_ID, bindings: len(by_id.keys())}
 }
 
@@ -118,7 +118,12 @@ pub fn normalize_inbound(harness: Harness, raw) {
     return __reject_err(unwrap_err(signed))
   }
   const body_text = unwrap(signed)
-  const verified = __verify_signature(harness, raw, headers, body_text)
+  const verified = __verify_signature(
+    {env: harness.env, runtime: harness.runtime},
+    raw,
+    headers,
+    body_text,
+  )
   if is_err(verified) {
     return __reject_err(unwrap_err(verified))
   }
@@ -184,8 +189,8 @@ pub fn call(harness: Harness, method, args = {}) {
   return __revision_log(harness, args ?? {})
 }
 
-fn __state(harness: Harness) {
-  return harness.runtime.store_get(STATE_KEY)
+fn __state(harness: HarnessRuntime) {
+  return harness.store_get(STATE_KEY)
     ?? {
     initialized: false,
     active: false,
@@ -195,8 +200,8 @@ fn __state(harness: Harness) {
   }
 }
 
-fn __set_state(harness: Harness, state) {
-  harness.runtime.store_set(STATE_KEY, state)
+fn __set_state(harness: HarnessRuntime, state) {
+  harness.store_set(STATE_KEY, state)
   return state
 }
 
@@ -269,7 +274,12 @@ fn __supports_event(event) {
   return false
 }
 
-fn __verify_signature(harness: Harness, raw, headers, body_text) {
+fn __verify_signature(
+  harness: {env: HarnessEnv, runtime: HarnessRuntime},
+  raw,
+  headers,
+  body_text,
+) {
   const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
   if binding_id == nil || trim(to_string(binding_id)) == "" {
     return __err(
@@ -277,7 +287,7 @@ fn __verify_signature(harness: Harness, raw, headers, body_text) {
       "request did not include a binding_id; cannot resolve secret",
     )
   }
-  const secret = __signing_secret(harness, raw)
+  const secret = __signing_secret({env: harness.env, runtime: harness.runtime}, raw)
   // Fail-closed: refuse delivery when no signing secret is configured for this binding.
   if secret == nil || trim(to_string(secret)) == "" {
     return __err("missing_signature", "no signing secret configured for this binding")
@@ -327,8 +337,8 @@ fn __signed_surface(raw) {
  * must not feed the HMAC key. binding_id is required upstream; we refuse the single-binding
  * fallback so that secrets are never resolved without an explicit binding pointer.
  */
-fn __signing_secret(harness: Harness, raw) {
-  const state = __state(harness)
+fn __signing_secret(harness: {env: HarnessEnv, runtime: HarnessRuntime}, raw) {
+  const state = __state(harness.runtime)
   const ctx_secret = state?.ctx?.signing_secret ?? state?.ctx?.secrets?.signing_secret
   if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
     return to_string(ctx_secret)
@@ -470,16 +480,17 @@ fn __normalized_headers(headers) {
 }
 
 @complexity(allow)
-fn __outbound_config(harness: Harness, args) {
+fn __outbound_config(harness: HarnessEnv, args) {
   const env_base = ENV_PREFIX + "_API_BASE_URL"
   const env_token = ENV_PREFIX + "_TOKEN"
-  const api_base_url = args?.api_base_url ?? harness.env.get_or(env_base, DEFAULT_API_BASE_URL)
+  const api_base_url = args?.api_base_url ?? harness.get_or(env_base, DEFAULT_API_BASE_URL)
   // F11: only treat an explicit access_token / token as Bearer credentials. Do NOT alias
   // app_password or personal_access_token into Bearer for SVN — that's wrong for HTTP Basic
   // servers and would leak the password to a misconfigured endpoint.
   const access_token = args?.access_token ?? args?.token ?? args?.secrets?.access_token
-    ?? harness.env
-    .get(env_token)
+    ?? harness.get(
+    env_token,
+  )
   return Ok({api_base_url: to_string(api_base_url), access_token: access_token})
 }
 
@@ -489,15 +500,11 @@ fn __outbound_config(harness: Harness, args) {
  * (or env $SVN_PASSWORD) are present, and only attach Bearer when the caller passed an
  * explicit `access_token` / `token`.
  */
-fn __authorization_header(harness: Harness, args, cfg) {
+fn __authorization_header(harness: HarnessEnv, args, cfg) {
   const username = args?.username ?? args?.secrets?.username
-    ?? harness.env.get(
-    ENV_PREFIX + "_USERNAME",
-  )
+    ?? harness.get(ENV_PREFIX + "_USERNAME")
   const password = args?.password ?? args?.secrets?.password
-    ?? harness.env.get(
-    ENV_PREFIX + "_PASSWORD",
-  )
+    ?? harness.get(ENV_PREFIX + "_PASSWORD")
   if username != nil && trim(to_string(username)) != "" && password != nil
     && trim(
     to_string(password),
@@ -511,7 +518,7 @@ fn __authorization_header(harness: Harness, args, cfg) {
   return nil
 }
 
-fn __rate_limit_config(harness: Harness, args) {
+fn __rate_limit_config(harness: HarnessRuntime, args) {
   const direct = args?.rate_limit
   if direct != nil {
     return direct
@@ -533,17 +540,17 @@ fn __rate_limit_scope(args, config) {
     ?? "default"
 }
 
-fn __rate_limit_acquire(harness: Harness, args) {
-  const config = __rate_limit_config(harness, args)
+fn __rate_limit_acquire(harness: {clock: HarnessClock, runtime: HarnessRuntime}, args) {
+  const config = __rate_limit_config(harness.runtime, args)
   if config == nil {
     return Ok({allowed: true, retry_after_ms: 0})
   }
   const scope = __rate_limit_scope(args, config)
-  const state = __state(harness)
+  const state = __state(harness.runtime)
   let buckets = state?.rate_limit_buckets ?? {}
   const result = rate_limit_token_bucket(harness.clock, buckets.get(scope), config, nil)
   buckets[scope] = result.state
-  __set_state(harness, state + {rate_limit_buckets: buckets})
+  __set_state(harness.runtime, state + {rate_limit_buckets: buckets})
   if !result.allowed {
     return __err_with(
       "rate_limited",
@@ -594,12 +601,12 @@ fn __response_rate_limit(headers) {
 
 @complexity(allow)
 fn __api_request(harness: Harness, args) {
-  const config = __outbound_config(harness, args ?? {})
+  const config = __outbound_config(harness.env, args ?? {})
   if is_err(config) {
     return config
   }
   const cfg = unwrap(config)
-  const permit = __rate_limit_acquire(harness, args ?? {})
+  const permit = __rate_limit_acquire({clock: harness.clock, runtime: harness.runtime}, args ?? {})
   if is_err(permit) {
     return permit
   }
@@ -614,7 +621,7 @@ fn __api_request(harness: Harness, args) {
   // configured, so we never leak Basic/Bearer credentials in cleartext.
   const is_plaintext = starts_with(to_string(cfg.api_base_url ?? ""), "http://")
   let options = {headers: {Accept: "application/json"}, retry: {max: 0, backoff_ms: 0}}
-  const auth_header = __authorization_header(harness, args ?? {}, cfg)
+  const auth_header = __authorization_header(harness.env, args ?? {}, cfg)
   if auth_header != nil {
     if is_plaintext {
       return __err(
