@@ -189,8 +189,8 @@ pub fn call(harness: Harness, method, args = {}) {
   return __revision_log(harness, args ?? {})
 }
 
-fn __state(harness: HarnessRuntime) {
-  return harness.store_get(STATE_KEY)
+fn __state(runtime: HarnessRuntime) {
+  return runtime.store_get(STATE_KEY)
     ?? {
     initialized: false,
     active: false,
@@ -200,8 +200,8 @@ fn __state(harness: HarnessRuntime) {
   }
 }
 
-fn __set_state(harness: HarnessRuntime, state) {
-  harness.store_set(STATE_KEY, state)
+fn __set_state(runtime: HarnessRuntime, state) {
+  runtime.store_set(STATE_KEY, state)
   return state
 }
 
@@ -480,15 +480,15 @@ fn __normalized_headers(headers) {
 }
 
 @complexity(allow)
-fn __outbound_config(harness: HarnessEnv, args) {
+fn __outbound_config(env: HarnessEnv, args) {
   const env_base = ENV_PREFIX + "_API_BASE_URL"
   const env_token = ENV_PREFIX + "_TOKEN"
-  const api_base_url = args?.api_base_url ?? harness.get_or(env_base, DEFAULT_API_BASE_URL)
+  const api_base_url = args?.api_base_url ?? env.get_or(env_base, DEFAULT_API_BASE_URL)
   // F11: only treat an explicit access_token / token as Bearer credentials. Do NOT alias
   // app_password or personal_access_token into Bearer for SVN — that's wrong for HTTP Basic
   // servers and would leak the password to a misconfigured endpoint.
   const access_token = args?.access_token ?? args?.token ?? args?.secrets?.access_token
-    ?? harness.get(
+    ?? env.get(
     env_token,
   )
   return Ok({api_base_url: to_string(api_base_url), access_token: access_token})
@@ -500,11 +500,11 @@ fn __outbound_config(harness: HarnessEnv, args) {
  * (or env $SVN_PASSWORD) are present, and only attach Bearer when the caller passed an
  * explicit `access_token` / `token`.
  */
-fn __authorization_header(harness: HarnessEnv, args, cfg) {
+fn __authorization_header(env: HarnessEnv, args, cfg) {
   const username = args?.username ?? args?.secrets?.username
-    ?? harness.get(ENV_PREFIX + "_USERNAME")
+    ?? env.get(ENV_PREFIX + "_USERNAME")
   const password = args?.password ?? args?.secrets?.password
-    ?? harness.get(ENV_PREFIX + "_PASSWORD")
+    ?? env.get(ENV_PREFIX + "_PASSWORD")
   if username != nil && trim(to_string(username)) != "" && password != nil
     && trim(
     to_string(password),
@@ -518,12 +518,12 @@ fn __authorization_header(harness: HarnessEnv, args, cfg) {
   return nil
 }
 
-fn __rate_limit_config(harness: HarnessRuntime, args) {
+fn __rate_limit_config(runtime: HarnessRuntime, args) {
   const direct = args?.rate_limit
   if direct != nil {
     return direct
   }
-  const state = __state(harness)
+  const state = __state(runtime)
   const binding_id = args?.binding_id ?? args?.metadata?.binding_id
   if binding_id != nil {
     const binding = state?.bindings?.get(binding_id)
