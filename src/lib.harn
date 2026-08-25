@@ -191,13 +191,7 @@ pub fn call(harness: Harness, method, args = {}) {
 
 fn __state(runtime: HarnessRuntime) {
   return runtime.store_get(STATE_KEY)
-    ?? {
-    initialized: false,
-    active: false,
-    bindings: {},
-    ctx: {},
-    rate_limit_buckets: {},
-  }
+    ?? {initialized: false, active: false, bindings: {}, ctx: {}, rate_limit_buckets: {}}
 }
 
 fn __set_state(runtime: HarnessRuntime, state) {
@@ -230,7 +224,7 @@ fn __reject_err(err) {
     401
   } else if code == "missing_binding_id" || code == "missing_body"
     || code
-    == "invalid_body" {
+      == "invalid_body" {
     400
   } else {
     400
@@ -254,8 +248,7 @@ fn __base_event(payload, headers) {
     return to_string(from_header)
   }
   return payload?.event ?? payload?.event_name ?? payload?.object_kind ?? payload?.type
-    ?? payload
-    ?.action
+    ?? payload?.action
 }
 
 fn __supports_event(event) {
@@ -350,8 +343,7 @@ fn __signing_secret(harness: {env: HarnessEnv, runtime: HarnessRuntime}, raw) {
   const bindings = state?.bindings ?? {}
   const binding = bindings.get(binding_id)
   const bound = binding?.signing_secret ?? binding?.secrets?.signing_secret
-    ?? binding?.config
-    ?.signing_secret
+    ?? binding?.config?.signing_secret
   if bound != nil && trim(to_string(bound)) != "" {
     return to_string(bound)
   }
@@ -431,14 +423,13 @@ fn __actor(payload) {
 
 fn __resource(payload) {
   return payload?.pull_request ?? payload?.pullrequest ?? payload?.issue ?? payload?.comment
-    ?? payload
-    ?.release
+    ?? payload?.release
     ?? payload?.object_attributes
     ?? {
-    revision: payload?.revision,
-    changed_paths: payload?.changed_paths,
-    commits: payload?.commits,
-  }
+      revision: payload?.revision,
+      changed_paths: payload?.changed_paths,
+      commits: payload?.commits,
+    }
 }
 
 fn __dedupe_key(base_event, payload, raw, headers, body_text) {
@@ -455,9 +446,7 @@ fn __dedupe_key(base_event, payload, raw, headers, body_text) {
   const received_at = raw?.received_at ?? raw?.occurred_at ?? ""
   const body_b64 = raw?.body_base64 ?? body_text
   return PROVIDER_ID + ":" + __normalize_kind(base_event) + ":"
-    + sha256(
-    to_string(body_b64) + "|" + to_string(received_at) + "|" + to_string(binding_id),
-  )
+    + sha256(to_string(body_b64) + "|" + to_string(received_at) + "|" + to_string(binding_id))
 }
 
 fn __normalized_headers(headers) {
@@ -488,9 +477,7 @@ fn __outbound_config(env: HarnessEnv, args) {
   // app_password or personal_access_token into Bearer for SVN — that's wrong for HTTP Basic
   // servers and would leak the password to a misconfigured endpoint.
   const access_token = args?.access_token ?? args?.token ?? args?.secrets?.access_token
-    ?? env.get(
-    env_token,
-  )
+    ?? env.get(env_token)
   return Ok({api_base_url: to_string(api_base_url), access_token: access_token})
 }
 
@@ -506,10 +493,8 @@ fn __authorization_header(env: HarnessEnv, args, cfg) {
   const password = args?.password ?? args?.secrets?.password
     ?? env.get(ENV_PREFIX + "_PASSWORD")
   if username != nil && trim(to_string(username)) != "" && password != nil
-    && trim(
-    to_string(password),
-  )
-    != "" {
+    && trim(to_string(password))
+      != "" {
     return "Basic " + base64_encode(to_string(username) + ":" + to_string(password))
   }
   if cfg.access_token != nil && trim(to_string(cfg.access_token)) != "" {
