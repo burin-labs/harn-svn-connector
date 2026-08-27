@@ -64,14 +64,14 @@ pub fn payload_schema() {
 }
 
 /** Initialize connector state with orchestrator context. */
-pub fn init(harness: Harness, ctx = nil) {
+pub fn init(harness: Harness, ctx: any = nil) {
   const next = __state(harness.runtime) + {initialized: true, ctx: ctx ?? {}}
   __set_state(harness.runtime, next)
   return next
 }
 
 /** Activate configured trigger bindings. */
-pub fn activate(harness: Harness, bindings = []) {
+pub fn activate(harness: Harness, bindings: any = []) {
   let by_id = {}
   let seen_paths = {}
   for binding in bindings ?? [] {
@@ -109,7 +109,7 @@ pub fn shutdown(harness: Harness) {
 
 @complexity(allow)
 /** Verify and normalize an inbound webhook request. */
-pub fn normalize_inbound(harness: Harness, raw) {
+pub fn normalize_inbound(harness: Harness, raw: any) {
   const headers = raw?.headers ?? {}
   // Resolve the signed surface (raw bytes preferred over body_text) before parsing JSON so an
   // unsigned/oversized payload cannot exhaust the parser ahead of signature verification.
@@ -155,7 +155,7 @@ pub fn normalize_inbound(harness: Harness, raw) {
 }
 
 /** Run one polling tick for providers that support polling. */
-pub fn poll_tick(harness: Harness, ctx = nil) {
+pub fn poll_tick(harness: Harness, ctx: any = nil) {
   const cursor = ctx?.cursor ?? ctx?.state?.last_revision
   return {
     type: "batch",
@@ -167,7 +167,7 @@ pub fn poll_tick(harness: Harness, ctx = nil) {
 
 @complexity(allow)
 /** Dispatch a supported outbound helper method. */
-pub fn call(harness: Harness, method, args = {}) {
+pub fn call(harness: Harness, method: any, args: any = {}) {
   if !contains(OUTBOUND_METHODS, method) {
     return __err(
       "method_not_found",
@@ -194,20 +194,20 @@ fn __state(runtime: HarnessRuntime) {
     ?? {initialized: false, active: false, bindings: {}, ctx: {}, rate_limit_buckets: {}}
 }
 
-fn __set_state(runtime: HarnessRuntime, state) {
+fn __set_state(runtime: HarnessRuntime, state: any) {
   runtime.store_set(STATE_KEY, state)
   return state
 }
 
-fn __err(code, message) {
+fn __err(code: any, message: any) {
   return Err({code: code, message: message})
 }
 
-fn __err_with(code, message, extra) {
+fn __err_with(code: any, message: any, extra: any) {
   return Err({code: code, message: message} + (extra ?? {}))
 }
 
-fn __reject(status, code, message) {
+fn __reject(status: any, code: any, message: any) {
   return {
     type: "reject",
     reject: {
@@ -218,7 +218,7 @@ fn __reject(status, code, message) {
   }
 }
 
-fn __reject_err(err) {
+fn __reject_err(err: any) {
   const code = err?.code ?? "rejected"
   const status = if code == "invalid_signature" || code == "missing_signature" {
     401
@@ -232,7 +232,7 @@ fn __reject_err(err) {
   return __reject(status, code, err?.message ?? "request rejected")
 }
 
-fn __header(headers, name) {
+fn __header(headers: any, name: any) {
   const wanted = lowercase(name)
   for entry in (headers ?? {}).entries() {
     if lowercase(trim(to_string(entry.key))) == wanted {
@@ -242,7 +242,7 @@ fn __header(headers, name) {
   return nil
 }
 
-fn __base_event(payload, headers) {
+fn __base_event(payload: any, headers: any) {
   const from_header = __header(headers, EVENT_HEADER)
   if from_header != nil && from_header != "" {
     return to_string(from_header)
@@ -251,7 +251,7 @@ fn __base_event(payload, headers) {
     ?? payload?.action
 }
 
-fn __supports_event(event) {
+fn __supports_event(event: any) {
   if contains(SUPPORTED_EVENTS, event) {
     return true
   }
@@ -269,9 +269,9 @@ fn __supports_event(event) {
 
 fn __verify_signature(
   harness: {env: HarnessEnv, runtime: HarnessRuntime},
-  raw,
-  headers,
-  body_text,
+  raw: any,
+  headers: any,
+  body_text: any,
 ) {
   const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
   if binding_id == nil || trim(to_string(binding_id)) == "" {
@@ -306,7 +306,7 @@ fn __verify_signature(
  * base64-decode raw.body_base64. Reject when neither field is present so we never HMAC over
  * "" by accident.
  */
-fn __signed_surface(raw) {
+fn __signed_surface(raw: any) {
   const body_text = raw?.body_text ?? raw?.body
   if body_text != nil {
     return Ok(to_string(body_text))
@@ -330,7 +330,7 @@ fn __signed_surface(raw) {
  * must not feed the HMAC key. binding_id is required upstream; we refuse the single-binding
  * fallback so that secrets are never resolved without an explicit binding pointer.
  */
-fn __signing_secret(harness: {env: HarnessEnv, runtime: HarnessRuntime}, raw) {
+fn __signing_secret(harness: {env: HarnessEnv, runtime: HarnessRuntime}, raw: any) {
   const state = __state(harness.runtime)
   const ctx_secret = state?.ctx?.signing_secret ?? state?.ctx?.secrets?.signing_secret
   if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
@@ -360,7 +360,14 @@ fn __signing_secret(harness: {env: HarnessEnv, runtime: HarnessRuntime}, raw) {
 }
 
 @complexity(allow)
-fn __build_event(base_event, payload, raw, headers, signature_status, body_text) {
+fn __build_event(
+  base_event: any,
+  payload: any,
+  raw: any,
+  headers: any,
+  signature_status: any,
+  body_text: any,
+) {
   const kind = __event_kind(base_event, payload)
   return {
     kind: kind,
@@ -380,14 +387,14 @@ fn __build_event(base_event, payload, raw, headers, signature_status, body_text)
   }
 }
 
-fn __signature_status(status) {
+fn __signature_status(status: any) {
   if status == "signed" || status == "verified" {
     return {state: "verified"}
   }
   return {state: "unsigned"}
 }
 
-fn __event_kind(base_event, payload) {
+fn __event_kind(base_event: any, payload: any) {
   const normalized = __normalize_kind(base_event)
   const action = payload?.action ?? payload?.pullrequest?.state
     ?? payload?.object_attributes?.action
@@ -397,11 +404,11 @@ fn __event_kind(base_event, payload) {
   return normalized + "." + __normalize_kind(action)
 }
 
-fn __normalize_kind(value) {
+fn __normalize_kind(value: any) {
   return lowercase(replace(replace(to_string(value), ":", "."), " ", "_"))
 }
 
-fn __repository(payload) {
+fn __repository(payload: any) {
   const repo = payload?.repository ?? payload?.repo ?? {}
   return {
     id: repo?.id ?? repo?.uuid,
@@ -411,7 +418,7 @@ fn __repository(payload) {
   }
 }
 
-fn __actor(payload) {
+fn __actor(payload: any) {
   const actor = payload?.sender ?? payload?.user ?? payload?.actor ?? payload?.pusher ?? {}
   return {
     id: actor?.id ?? actor?.uuid,
@@ -421,7 +428,7 @@ fn __actor(payload) {
   }
 }
 
-fn __resource(payload) {
+fn __resource(payload: any) {
   return payload?.pull_request ?? payload?.pullrequest ?? payload?.issue ?? payload?.comment
     ?? payload?.release
     ?? payload?.object_attributes
@@ -432,7 +439,7 @@ fn __resource(payload) {
     }
 }
 
-fn __dedupe_key(base_event, payload, raw, headers, body_text) {
+fn __dedupe_key(base_event: any, payload: any, raw: any, headers: any, body_text: any) {
   // Trust only the host-set delivery header — payload?.id / .uuid / .delivery_id / .revision
   // are attacker-controlled and would let a sender either suppress replay protection or evade
   // it at will.
@@ -449,7 +456,7 @@ fn __dedupe_key(base_event, payload, raw, headers, body_text) {
     + sha256(to_string(body_b64) + "|" + to_string(received_at) + "|" + to_string(binding_id))
 }
 
-fn __normalized_headers(headers) {
+fn __normalized_headers(headers: any) {
   let normalized = {}
   const event = __header(headers, EVENT_HEADER)
   if event != nil {
@@ -469,7 +476,7 @@ fn __normalized_headers(headers) {
 }
 
 @complexity(allow)
-fn __outbound_config(env: HarnessEnv, args) {
+fn __outbound_config(env: HarnessEnv, args: any) {
   const env_base = ENV_PREFIX + "_API_BASE_URL"
   const env_token = ENV_PREFIX + "_TOKEN"
   const api_base_url = args?.api_base_url ?? env.get_or(env_base, DEFAULT_API_BASE_URL)
@@ -487,7 +494,7 @@ fn __outbound_config(env: HarnessEnv, args) {
  * (or env $SVN_PASSWORD) are present, and only attach Bearer when the caller passed an
  * explicit `access_token` / `token`.
  */
-fn __authorization_header(env: HarnessEnv, args, cfg) {
+fn __authorization_header(env: HarnessEnv, args: any, cfg: any) {
   const username = args?.username ?? args?.secrets?.username
     ?? env.get(ENV_PREFIX + "_USERNAME")
   const password = args?.password ?? args?.secrets?.password
@@ -503,7 +510,7 @@ fn __authorization_header(env: HarnessEnv, args, cfg) {
   return nil
 }
 
-fn __rate_limit_config(runtime: HarnessRuntime, args) {
+fn __rate_limit_config(runtime: HarnessRuntime, args: any) {
   const direct = args?.rate_limit
   if direct != nil {
     return direct
@@ -520,12 +527,12 @@ fn __rate_limit_config(runtime: HarnessRuntime, args) {
   return state?.ctx?.rate_limit
 }
 
-fn __rate_limit_scope(args, config) {
+fn __rate_limit_scope(args: any, config: any) {
   return config?.scope_key ?? args?.rate_limit_scope ?? args?.repository_url ?? args?.binding_id
     ?? "default"
 }
 
-fn __rate_limit_acquire(harness: {clock: HarnessClock, runtime: HarnessRuntime}, args) {
+fn __rate_limit_acquire(harness: {clock: HarnessClock, runtime: HarnessRuntime}, args: any) {
   const config = __rate_limit_config(harness.runtime, args)
   if config == nil {
     return Ok({allowed: true, retry_after_ms: 0})
@@ -547,7 +554,7 @@ fn __rate_limit_acquire(harness: {clock: HarnessClock, runtime: HarnessRuntime},
   return Ok({allowed: true, retry_after_ms: 0})
 }
 
-fn __int_header(headers, name) {
+fn __int_header(headers: any, name: any) {
   const value = __header(headers, name)
   if value == nil || value == "" {
     return nil
@@ -561,7 +568,7 @@ fn __int_header(headers, name) {
   return nil
 }
 
-fn __retry_after_ms(headers) {
+fn __retry_after_ms(headers: any) {
   const value = __header(headers, "retry-after")
   if value == nil || value == "" {
     return nil
@@ -575,7 +582,7 @@ fn __retry_after_ms(headers) {
   return nil
 }
 
-fn __response_rate_limit(headers) {
+fn __response_rate_limit(headers: any) {
   return {
     limit: __int_header(headers, "x-ratelimit-limit"),
     remaining: __int_header(headers, "x-ratelimit-remaining"),
@@ -585,7 +592,7 @@ fn __response_rate_limit(headers) {
 }
 
 @complexity(allow)
-fn __api_request(harness: Harness, args) {
+fn __api_request(harness: Harness, args: any) {
   const config = __outbound_config(harness.env, args ?? {})
   if is_err(config) {
     return config
@@ -663,7 +670,7 @@ fn __api_request(harness: Harness, args) {
 }
 
 @complexity(allow)
-fn __paginate(harness: Harness, args) {
+fn __paginate(harness: Harness, args: any) {
   const cursor_param = args?.cursor_param ?? "cursor"
   const cursor_path = args?.cursor_path ?? "/next_cursor"
   const items_path = args?.items_path
@@ -701,7 +708,7 @@ fn __paginate(harness: Harness, args) {
   return unwrap(attempt)
 }
 
-fn __append_query(target, key, value) {
+fn __append_query(target: any, key: any, value: any) {
   const separator = if contains(target, "?") {
     "&"
   } else {
@@ -715,7 +722,7 @@ fn __append_query(target, key, value) {
  * Authorization header) cannot be redirected to attacker-chosen hosts. Callers must pass a
  * relative path; absolute URLs return Err.
  */
-fn __api_url(api_base_url, path) {
+fn __api_url(api_base_url: any, path: any) {
   const base = trim(to_string(api_base_url))
   const path_str = to_string(path ?? "")
   if starts_with(path_str, "http://") || starts_with(path_str, "https://") {
@@ -741,7 +748,7 @@ fn __api_url(api_base_url, path) {
  * Resolve the repository-relative path to read. SVN servers expose a repository at a base URL;
  * callers pass `repo_path` (e.g. "/trunk") to scope a read, defaulting to the repository root.
  */
-fn __svn_repo_path(args) {
+fn __svn_repo_path(args: any) {
   const repo_path = args?.repo_path ?? args?.path_in_repo ?? ""
   const trimmed = trim(to_string(repo_path))
   if trimmed == "" {
@@ -758,7 +765,7 @@ fn __svn_repo_path(args) {
  * (DAV) endpoint. Read-only; SVN has no outbound write API in this connector's scope. Override the
  * exact path with `path`.
  */
-fn __repository_info(harness: Harness, args) {
+fn __repository_info(harness: Harness, args: any) {
   const path = args?.path ?? ("/info" + __svn_repo_path(args))
   return __api_request(harness, args + {method: "GET", path: path})
 }
@@ -767,7 +774,7 @@ fn __repository_info(harness: Harness, args) {
  * Read a single Subversion revision (`svn log -r <rev>` / `svn info -r <rev>` semantics) over the
  * configured SVN HTTP endpoint. Required arg: `revision`. Read-only. Override the path with `path`.
  */
-fn __revision_get(harness: Harness, args) {
+fn __revision_get(harness: Harness, args: any) {
   const revision = args?.revision ?? args?.rev
   if revision == nil || trim(to_string(revision)) == "" {
     return __err("invalid_args", "revision.get requires revision")
@@ -783,7 +790,7 @@ fn __revision_get(harness: Harness, args) {
  * entries. Read-only. Override the path with `path`.
  */
 @complexity(allow)
-fn __revision_log(harness: Harness, args) {
+fn __revision_log(harness: Harness, args: any) {
   const base = "/log" + __svn_repo_path(args)
   let query_parts = []
   if args?.from_revision != nil && trim(to_string(args.from_revision)) != "" {
