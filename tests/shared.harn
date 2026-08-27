@@ -1,7 +1,7 @@
 import { activate, call, init, normalize_inbound, shutdown } from "../src/lib"
 
 @complexity(allow)
-fn signed_raw(body, secret, headers) {
+fn signed_raw(body: any, secret: any, headers: any) {
   return {
     binding_id: "primary",
     body_text: body,
