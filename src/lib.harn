@@ -118,12 +118,7 @@ pub fn normalize_inbound(harness: Harness, raw: any) {
     return __reject_err(unwrap_err(signed))
   }
   const body_text = unwrap(signed)
-  const verified = __verify_signature(
-    {env: harness.env, runtime: harness.runtime},
-    raw,
-    headers,
-    body_text,
-  )
+  const verified = __verify_signature(pick(harness, ["env", "runtime"]), raw, headers, body_text)
   if is_err(verified) {
     return __reject_err(unwrap_err(verified))
   }
@@ -280,7 +275,7 @@ fn __verify_signature(
       "request did not include a binding_id; cannot resolve secret",
     )
   }
-  const secret = __signing_secret({env: harness.env, runtime: harness.runtime}, raw)
+  const secret = __signing_secret(pick(harness, ["env", "runtime"]), raw)
   // Fail-closed: refuse delivery when no signing secret is configured for this binding.
   if secret == nil || trim(to_string(secret)) == "" {
     return __err("missing_signature", "no signing secret configured for this binding")
@@ -598,7 +593,7 @@ fn __api_request(harness: Harness, args: any) {
     return config
   }
   const cfg = unwrap(config)
-  const permit = __rate_limit_acquire({clock: harness.clock, runtime: harness.runtime}, args ?? {})
+  const permit = __rate_limit_acquire(pick(harness, ["clock", "runtime"]), args ?? {})
   if is_err(permit) {
     return permit
   }
