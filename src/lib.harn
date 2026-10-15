@@ -761,7 +761,7 @@ fn __svn_repo_path(args: any) {
  * exact path with `path`.
  */
 fn __repository_info(harness: Harness, args: any) {
-  const path = args?.path ?? ("/info" + __svn_repo_path(args))
+  const path = args?.path ?? "/info" + __svn_repo_path(args)
   return __api_request(harness, args + {method: "GET", path: path})
 }
 
@@ -775,7 +775,7 @@ fn __revision_get(harness: Harness, args: any) {
     return __err("invalid_args", "revision.get requires revision")
   }
   const path = args?.path
-    ?? ("/revisions/" + url_encode(to_string(revision)) + __svn_repo_path(args))
+    ?? "/revisions/" + url_encode(to_string(revision)) + __svn_repo_path(args)
   return __api_request(harness, args + {method: "GET", path: path})
 }
 
@@ -802,6 +802,6 @@ fn __revision_log(harness: Harness, args: any) {
   } else {
     "?" + join(query_parts, "&")
   }
-  const path = args?.path ?? (base + query)
+  const path = args?.path ?? base + query
   return __api_request(harness, args + {method: "GET", path: path})
 }
